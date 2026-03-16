@@ -5,7 +5,7 @@
 
 ## Summary
 
-A GCP Compute Engine VM managed by Terraform, running a full dev environment via devbox, accessible over SSH with tmux for session persistence. Auto-stop on idle keeps costs low. This repo (`zaeem-setup`) is the single home for all infra code, tool config, and dotfiles.
+A GCP Compute Engine VM managed by Terraform, running a full dev environment via devbox, accessible over SSH with tmux for session persistence. Auto-stop on idle keeps costs low. This repo (`zaeem_devbox`) is the single home for all infra code, tool config, and dotfiles.
 
 ## Goals
 
@@ -17,7 +17,7 @@ A GCP Compute Engine VM managed by Terraform, running a full dev environment via
 ## Repository Structure
 
 ```
-zaeem-setup/
+zaeem_devbox/
 ├── terraform/          # GCP VM, firewall, GCS state bucket
 ├── devbox/             # devbox.json — pinned tool versions
 ├── dotfiles/           # zsh, tmux, git, Claude Code config

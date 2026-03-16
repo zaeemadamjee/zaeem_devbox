@@ -65,7 +65,7 @@ eval "$(zoxide init zsh)"
 
 # --- First login: clone pinecone repos (needs SSH agent) ---
 REPOS_MARKER="$HOME/.pinecone-repos-cloned"
-CLONE_SCRIPT="$HOME/zaeem-setup/scripts/clone-repos.sh"
+CLONE_SCRIPT="$HOME/zaeem_devbox/scripts/clone-repos.sh"
 if [[ ! -f "$REPOS_MARKER" ]] && [[ -f "$CLONE_SCRIPT" ]] && [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
   if bash "$CLONE_SCRIPT"; then
     touch "$REPOS_MARKER"

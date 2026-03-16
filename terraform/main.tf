@@ -99,13 +99,13 @@ resource "google_compute_instance" "devbox" {
 
       echo "[startup] Writing first-login bootstrap trigger..."
       cat > /home/zaeem/.zshrc <<'ZSHRC'
-# Temporary .zshrc — clones zaeem-setup and bootstraps on first SSH login.
+# Temporary .zshrc — clones zaeem_devbox and bootstraps on first SSH login.
 # Replaced by bootstrap.sh with the real dotfiles/zshrc symlink.
 if [[ ! -f "$HOME/.bootstrap-complete" ]] && [[ -n "$${SSH_AUTH_SOCK:-}" ]]; then
-  echo "==> First login: cloning zaeem-setup..."
-  git clone git@github.com:pinecone-io/zaeem-setup.git "$HOME/zaeem-setup"
+  echo "==> First login: cloning zaeem_devbox..."
+  git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$HOME/zaeem_devbox"
   echo "==> Running bootstrap..."
-  bash "$HOME/zaeem-setup/dotfiles/bootstrap.sh" && touch "$HOME/.bootstrap-complete"
+  bash "$HOME/zaeem_devbox/dotfiles/bootstrap.sh" && touch "$HOME/.bootstrap-complete"
   echo "==> Reloading shell with full config..."
   exec zsh
 fi

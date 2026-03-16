@@ -35,7 +35,7 @@ dotfiles/
 
 `bootstrap.sh` addition:
 ```bash
-ln -sf ~/zaeem-setup/dotfiles/nvim ~/.config/nvim
+ln -sf ~/zaeem_devbox/dotfiles/nvim ~/.config/nvim
 ```
 
 `devbox.json` additions: `neovim@latest`, `fd@latest`

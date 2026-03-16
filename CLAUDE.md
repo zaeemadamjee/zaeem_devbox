@@ -1,4 +1,4 @@
-# Claude Instructions for zaeem-setup
+# Claude Instructions for zaeem_devbox
 
 ## Purpose
 

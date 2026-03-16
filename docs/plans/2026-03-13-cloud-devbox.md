@@ -184,7 +184,7 @@ output "external_ip" {
 
 ```hcl
 project_id     = "your-gcp-project-id"
-ssh_public_key = "ssh-ed25519 AAAA... zaeem-devbox"
+ssh_public_key = "ssh-ed25519 AAAA... zaeem_devbox"
 ```
 
 > Copy this to `terraform.tfvars` (gitignored) and fill in real values before running Terraform.
@@ -880,13 +880,13 @@ Expected: VM starts, SSH connects, drops you into a bash shell.
 **Step 2: Clone this repo on the VM**
 
 ```bash
-git clone https://github.com/zaeemadamjee/zaeem-setup.git ~/zaeem-setup
+git clone https://github.com/zaeemadamjee/zaeem_devbox.git ~/zaeem_devbox
 ```
 
 **Step 3: Run bootstrap**
 
 ```bash
-cd ~/zaeem-setup && bash dotfiles/bootstrap.sh
+cd ~/zaeem_devbox && bash dotfiles/bootstrap.sh
 ```
 
 Expected: devbox installs, dotfiles symlinked, zsh set as default shell, Claude Code installed, idle timer enabled.

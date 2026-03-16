@@ -3,8 +3,8 @@
 #
 # Runs automatically via GCP startup-script on first boot.
 # Can also be run manually:
-#   git clone https://github.com/zaeemadamjee/zaeem-setup.git ~/zaeem-setup
-#   bash ~/zaeem-setup/dotfiles/bootstrap.sh
+#   git clone https://github.com/zaeemadamjee/zaeem_devbox.git ~/zaeem_devbox
+#   bash ~/zaeem_devbox/dotfiles/bootstrap.sh
 #
 # Safe to re-run (idempotent).
 
