@@ -16,7 +16,8 @@ A fully reproducible GCP cloud dev box, provisioned from scratch with Terraform 
 
 ### 2. Local CLI Tools (on your Mac)
 - `gcloud` CLI — authenticated (`gcloud auth login` + `gcloud config set project zaeem-dev`)
-- `terraform` >= 1.6 (`brew install terraform`)
+- `terraform` >= 1.6 (`brew tap hashicorp/tap &&
+brew install hashicorp/tap/terraform`)
 - `git`, `ssh`, `curl`, `python3` — all standard on macOS
 
 ### 3. SSH Key
