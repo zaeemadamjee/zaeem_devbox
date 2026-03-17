@@ -61,3 +61,13 @@ ssh_public_key = "ssh-ed25519 AAAA..."   # from setup-gcp-prereqs.sh output
 5. cd terraform && terraform init && terraform apply
 6. scripts/start.sh                 # starts VM, SSH in, bootstrap runs automatically
 ```
+
+## Aliases (optional)
+
+Add `devbox-start` and `devbox-stop` aliases to your `~/.zshrc` for convenience:
+
+```bash
+echo 'alias devbox-start="~/Documents/git/zaeem_devbox/scripts/start.sh"' >> ~/.zshrc
+echo 'alias devbox-stop="~/Documents/git/zaeem_devbox/scripts/stop.sh"' >> ~/.zshrc
+source ~/.zshrc
+```
