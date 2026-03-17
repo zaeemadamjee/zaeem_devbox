@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-IDLE_THRESHOLD_MINUTES=30
+IDLE_THRESHOLD_MINUTES=20
 STATE_FILE="/tmp/last_active_time"
 LOG="/var/log/idle-check.log"
 
