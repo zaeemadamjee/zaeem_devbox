@@ -8,16 +8,27 @@ terraform {
     }
   }
 
-  backend "gcs" {
-    bucket = "zaeem-tf-state"
-    prefix = "devbox"
-  }
+  # Partial backend — bucket and prefix are supplied at init time:
+  #   terraform init \
+  #     -backend-config="bucket=zaeem-devbox-tf-state" \
+  #     -backend-config="prefix=<profile-name>"
+  #
+  # This is handled automatically by scripts/reset.sh and scripts/start.sh
+  # via terraform_init_profile in scripts/lib/profile.sh.
+  backend "gcs" {}
 }
 
 provider "google" {
   project = var.project_id
   region  = var.region
-  zone    = var.zone
+}
+
+data "google_compute_zones" "available" {
+  region = var.region
+}
+
+locals {
+  zone = var.zone != "" ? var.zone : data.google_compute_zones.available.names[0]
 }
 
 resource "google_service_account" "otelcol" {
@@ -57,16 +68,16 @@ resource "google_compute_firewall" "allow_ssh" {
 }
 
 resource "google_compute_instance" "devbox" {
-  name         = "zaeem-devbox"
-  machine_type = "e2-standard-2"
-  zone         = var.zone
+  name         = var.instance_name
+  machine_type = var.machine_type
+  zone         = local.zone
 
   tags = ["devbox"]
 
   boot_disk {
     initialize_params {
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
-      size  = 50
+      size  = var.disk_size
       type  = "pd-ssd"
     }
   }
@@ -82,7 +93,15 @@ resource "google_compute_instance" "devbox" {
   }
 
   metadata = {
-    ssh-keys       = "zaeem:${var.ssh_public_key}"
+    # SSH access — one "zaeem:<pubkey>" entry per machine
+    ssh-keys = join("\n", [for key in var.ssh_public_keys : "zaeem:${key}"])
+
+    # Profile metadata — read by bootstrap.sh and clone-repos.sh on the VM
+    devbox-profile            = var.profile_name
+    devbox-idle-timer-enabled = tostring(var.idle_timer_enabled)
+    devbox-repos              = join("\n", var.repos)
+    devbox-secrets            = join("\n", var.secrets)
+
     startup-script = <<-EOF
       #!/bin/bash
       set -euo pipefail

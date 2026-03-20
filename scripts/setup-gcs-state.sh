@@ -2,30 +2,34 @@
 # =============================================================================
 # setup-gcs-state.sh
 #
-# Bootstraps the GCS bucket used for Terraform remote state storage.
-# This script must be run BEFORE `terraform init` since the backend bucket
-# must exist before Terraform can initialize the remote backend.
+# Creates the shared GCS bucket used for Terraform remote state.
+# Run once before first `terraform init` on any profile.
 #
-# GCS bucket names are globally unique. If `zaeem-tf-state` is already taken
-# by another GCP project, choose a different name and update the bucket name
-# in terraform/main.tf (backend "gcs" block) as well as this script.
+# State is stored per profile under:
+#   gs://zaeem-devbox-tf-state/<profile-name>/terraform.tfstate
+#
+# Uses the currently active gcloud project — make sure you're logged in to
+# the right project before running this.
 #
 # Usage:
 #   ./scripts/setup-gcs-state.sh
-#
-# Requirements:
-#   - gcloud CLI authenticated with sufficient permissions
-#   - Target GCP project: zaeem-dev
 # =============================================================================
 
 set -euo pipefail
 
-PROJECT="zaeem-dev"
-BUCKET_NAME="zaeem-tf-state"
-BUCKET_URI="gs://${BUCKET_NAME}"
 LOCATION="US"
 
-echo "==> Checking for existing GCS bucket: ${BUCKET_URI}"
+PROJECT=$(gcloud config get-value project 2>/dev/null)
+if [[ -z "$PROJECT" ]]; then
+  echo "Error: no active gcloud project."
+  echo "Run: gcloud config set project <project-id>"
+  exit 1
+fi
+
+BUCKET_NAME="${PROJECT}-zaeem-devbox-tf-state"
+BUCKET_URI="gs://${BUCKET_NAME}"
+
+echo "==> Checking for existing GCS bucket: ${BUCKET_URI} (project: ${PROJECT})"
 
 if gcloud storage buckets describe "${BUCKET_URI}" --project="${PROJECT}" &>/dev/null; then
   echo "    Bucket ${BUCKET_URI} already exists — skipping creation."
@@ -47,6 +51,5 @@ echo ""
 echo "==> Success! GCS state bucket is ready: ${BUCKET_URI}"
 echo ""
 echo "Next steps:"
-echo "  1. cd terraform/"
-echo "  2. terraform init"
-echo "  3. terraform plan"
+echo "  1. Create a profile in scripts/profiles/<name>.sh"
+echo "  2. Run: ./scripts/start.sh --profile <name>"

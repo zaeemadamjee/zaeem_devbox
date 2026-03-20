@@ -27,10 +27,13 @@ fi
 log "Installing devbox global packages..."
 devbox global pull "$REPO_ROOT/devbox/devbox.json"
 
+# Activate devbox so packages are available for the rest of bootstrap
+eval "$(devbox global shellenv)"
+
 # --- Symlink dotfiles ---
 log "Symlinking dotfiles..."
 ln -sf "$DOTFILES_DIR/zshrc"          "$HOME/.zshrc"
-ln -sf "$DOTFILES_DIR/aliases.sh"     "$HOME/.aliases"
+ln -sf "$DOTFILES_DIR/aliases.sh"     "$HOME/.aliases.sh"
 ln -sf "$DOTFILES_DIR/tmux.conf"      "$HOME/.tmux.conf"
 ln -sf "$DOTFILES_DIR/gitconfig"      "$HOME/.gitconfig"
 mkdir -p "$HOME/.config" "$HOME/.config/opencode"
@@ -88,29 +91,32 @@ if ! command -v claude &>/dev/null; then
 fi
 
 # --- Fetch secrets from GCP Secret Manager ---
-# Secret names in GCP must match the env var name exactly (e.g. ANTHROPIC_API_KEY)
-SECRETS=(
-  "ANTHROPIC_API_KEY"
-)
+# Secret names are stored in instance metadata (set by Terraform from the profile).
 log "Fetching secrets from Secret Manager..."
 METADATA_ROOT="http://metadata.google.internal/computeMetadata/v1"
 GCP_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" "$METADATA_ROOT/instance/service-accounts/default/token" | jq -r .access_token)
 GCP_PROJECT=$(curl -sf -H "Metadata-Flavor: Google" "$METADATA_ROOT/project/project-id")
+SECRETS_RAW=$(curl -sf -H "Metadata-Flavor: Google" "$METADATA_ROOT/instance/attributes/devbox-secrets" 2>/dev/null || echo "")
 mkdir -p "$HOME/.config"
 : > "$HOME/.config/secrets.env"
 chmod 600 "$HOME/.config/secrets.env"
-for SECRET_NAME in "${SECRETS[@]}"; do
-  VALUE=$(curl -sf \
-    -H "Authorization: Bearer $GCP_TOKEN" \
-    "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT/secrets/$SECRET_NAME/versions/latest:access" \
-    | jq -r .payload.data | base64 -d)
-  if [ -n "$VALUE" ]; then
-    printf 'export %s=%s\n' "$SECRET_NAME" "$VALUE" >> "$HOME/.config/secrets.env"
-    log "  $SECRET_NAME fetched"
-  else
-    log "  WARNING: Could not fetch secret '$SECRET_NAME'"
-  fi
-done
+if [ -n "$SECRETS_RAW" ]; then
+  while IFS= read -r SECRET_NAME; do
+    [ -z "$SECRET_NAME" ] && continue
+    VALUE=$(curl -sf \
+      -H "Authorization: Bearer $GCP_TOKEN" \
+      "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT/secrets/$SECRET_NAME/versions/latest:access" \
+      | jq -r .payload.data | base64 -d)
+    if [ -n "$VALUE" ]; then
+      printf 'export %s=%s\n' "$SECRET_NAME" "$VALUE" >> "$HOME/.config/secrets.env"
+      log "  $SECRET_NAME fetched"
+    else
+      log "  WARNING: Could not fetch secret '$SECRET_NAME'"
+    fi
+  done <<< "$SECRETS_RAW"
+else
+  log "  No secrets configured in instance metadata"
+fi
 
 # --- Install opencode ---
 if ! command -v opencode &>/dev/null; then
@@ -118,8 +124,11 @@ if ! command -v opencode &>/dev/null; then
   curl -fsSL https://opencode.ai/install | bash
 fi
 
-# --- Install systemd idle timer (added in next step) ---
-if [ -f "$DOTFILES_DIR/idle-check.sh" ]; then
+# --- Install systemd idle timer (only if enabled in profile) ---
+IDLE_TIMER_ENABLED=$(curl -sf \
+  -H "Metadata-Flavor: Google" \
+  "$METADATA_ROOT/instance/attributes/devbox-idle-timer-enabled" 2>/dev/null || echo "true")
+if [ "$IDLE_TIMER_ENABLED" = "true" ] && [ -f "$DOTFILES_DIR/idle-check.sh" ]; then
   log "Installing idle-stop timer..."
   sudo cp "$DOTFILES_DIR/idle-check.sh" /usr/local/bin/idle-check.sh
   sudo chmod +x /usr/local/bin/idle-check.sh
@@ -128,6 +137,8 @@ if [ -f "$DOTFILES_DIR/idle-check.sh" ]; then
   sudo systemctl daemon-reload
   sudo systemctl enable --now devbox-idle.timer
   log "Idle timer enabled (20min threshold, checks every 10min)"
+else
+  log "Idle timer disabled for this profile — skipping"
 fi
 
 log ""

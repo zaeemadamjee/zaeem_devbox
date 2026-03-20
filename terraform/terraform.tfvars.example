@@ -1,2 +1,37 @@
-project_id     = "zaeem-dev"
-ssh_public_key = "ssh-ed25519 AAAA... zaeem-devbox"
+# terraform.tfvars.example
+#
+# In the profile-based workflow, all variables are passed automatically via
+# -var-file when running scripts/reset.sh --profile <name>.
+#
+# You only need a terraform.tfvars file if you want to run Terraform commands
+# manually (e.g. `terraform plan` from the terraform/ directory).
+#
+# Copy this file to terraform.tfvars (gitignored) and fill in your values.
+# Note: terraform init also requires backend config:
+#   terraform init \
+#     -backend-config="bucket=<project-id>-zaeem-devbox-tf-state" \
+#     -backend-config="prefix=<profile-name>"
+
+project_id   = "zaeem-dev"
+region       = "us-central1"
+zone         = "us-central1-a"
+instance_name = "zaeem-devbox-travel"
+machine_type = "e2-standard-2"
+disk_size    = 50
+profile_name = "travel-agent"
+
+idle_timer_enabled = true
+
+# One entry per machine that needs SSH access
+ssh_public_keys = [
+  "ssh-ed25519 AAAA... zaeem@machine1",
+  # "ssh-ed25519 AAAA... zaeem@machine2",
+]
+
+repos = [
+  "git@github.com:zaeemadamjee/travel_agent.git",
+]
+
+secrets = [
+  "ANTHROPIC_API_KEY",
+]

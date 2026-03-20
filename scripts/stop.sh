@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# stop.sh — Manually stop the dev box.
+# stop.sh — Manually stop a devbox VM.
 #
-# The VM also auto-stops after 30 minutes of idle (via systemd timer).
+# Usage: ./scripts/stop.sh --profile <name>
+#
+# The VM also auto-stops after 20 minutes of idle (via systemd timer, if enabled).
 # Use this script to stop it immediately.
 
 set -euo pipefail
 
-INSTANCE="zaeem-devbox"
-ZONE="us-central1-a"
-PROJECT="zaeem-dev"
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPTS_DIR/lib/profile.sh"
 
-echo "==> Stopping $INSTANCE..."
-gcloud compute instances stop "$INSTANCE" --zone="$ZONE" --project="$PROJECT" --quiet
+PROFILE=$(parse_profile_flag "$@")
+load_profile "$PROFILE"
+check_gcp_project
+resolve_instance_zone
+
+echo "==> Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..."
+gcloud compute instances stop "$GCP_INSTANCE_NAME" \
+  --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
 echo "==> Done. VM is stopped (disk persists, no compute charges until next start)."
