@@ -28,25 +28,39 @@ gcloud compute instances start "$GCP_INSTANCE_NAME" \
 echo "==> Waiting for SSH to be ready..."
 IP=""
 SSH_READY="false"
-for i in $(seq 1 30); do
+for i in $(seq 1 60); do
   IP=$(gcloud compute instances describe "$GCP_INSTANCE_NAME" \
     --zone="$GCP_ZONE" --project="$GCP_PROJECT" \
     --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
-  if [ -n "$IP" ] && ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no \
+  if [ -n "$IP" ] && ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
        -o BatchMode=yes -i "$SSH_KEY" "${SSH_USER}@${IP}" true 2>/dev/null; then
     SSH_READY="true"
     break
   fi
-  echo "  attempt $i/30..."
+  echo "  attempt $i/60..."
   sleep 3
 done
 
 if [ -z "$IP" ] || [ "$SSH_READY" != "true" ]; then
-  echo "ERROR: Could not reach VM over SSH after 30 attempts" >&2
+  echo "ERROR: Could not reach VM over SSH after 60 attempts" >&2
   exit 1
 fi
 
 echo "==> VM is up at $IP"
+
+# Wait for the GCP startup script to fully complete before connecting.
+# It leaves a marker at /var/lib/startup-complete when done.
+echo "==> Waiting for startup script to complete..."
+for i in $(seq 1 40); do
+  if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o BatchMode=yes \
+       -i "$SSH_KEY" "${SSH_USER}@${IP}" \
+       "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
+    echo "    Startup complete."
+    break
+  fi
+  echo "  still initializing... ($i/40)"
+  sleep 5
+done
 
 # Remove stale known_hosts entry — VM gets new host keys after each reset
 ssh-keygen -R "$IP" 2>/dev/null || true
@@ -88,6 +102,7 @@ Host ${SSH_HOST}
   IdentityFile $SSH_KEY
   StrictHostKeyChecking no
   ForwardAgent yes
+  ConnectTimeout 30
 EOF
   echo "==> Added $SSH_HOST to SSH config"
 fi
