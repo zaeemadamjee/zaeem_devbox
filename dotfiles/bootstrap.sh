@@ -77,10 +77,16 @@ timed_spin() {
 MISSING=()
 track_missing() { MISSING+=("$1"); }
 
-# step <label> <check_expr> <install_body>
+# step [--interactive] <label> <check_expr> <install_body>
 #   check_expr   — bash expression evaluated in current shell; exit 0 = already done
-#   install_body — shell command string run via gum spin (subprocess); skipped in --check mode
+#   install_body — shell command string; skipped in --check mode
+#
+#   Default:       runs via gum spin (hidden output, spinner visible) — for fast silent commands
+#   --interactive: runs via eval in current shell (full terminal access) — for installers that
+#                  stream output, use progress bars, or prompt the user for input
 step() {
+  local interactive=false
+  [[ "${1:-}" == "--interactive" ]] && { interactive=true; shift; }
   local label="$1" check="$2" install="$3"
   if eval "$check" &>/dev/null 2>&1; then
     skip "$label"
@@ -89,7 +95,15 @@ step() {
     track_missing "$label"
   else
     local t0; t0=$(_t0)
-    gum spin --spinner dot --title "  ${label}..." -- bash -c "$install"
+    if $interactive; then
+      echo
+      gum style --bold --foreground 244 "  Installing: ${label}"
+      echo
+      eval "$install"
+      echo
+    else
+      gum spin --spinner dot --title "  ${label}..." -- bash -c "$install"
+    fi
     ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
   fi
 }
@@ -138,9 +152,14 @@ step "devbox binary" \
   "curl -fsSL https://releases.jetify.com/devbox -o /tmp/devbox && sudo install -m 755 /tmp/devbox /usr/local/bin/devbox && rm /tmp/devbox"
 
 if ! $CHECK_ONLY; then
-  # --show-output so the user can see which packages are being pulled
-  timed_spin --show-output "Pulling devbox global packages" \
-    devbox global pull "$REPO_ROOT/devbox/devbox.json"
+  # Run directly (not via gum spin) so Nix prompts and progress bars render correctly.
+  local_t0=$(_t0)
+  echo
+  gum style --bold --foreground 244 "  Pulling devbox global packages (Nix — may take a few minutes)..."
+  echo
+  devbox global pull "$REPO_ROOT/devbox/devbox.json"
+  echo
+  ok "devbox global packages  $(gum style --faint "$(_elapsed "$local_t0")")"
   eval "$(devbox global shellenv)"
 else
   step "devbox global packages synced" \
@@ -231,11 +250,11 @@ fi
 # CLI tools
 # ---------------------------------------------------------------------------
 section "CLI tools"
-step "Claude Code (claude)" \
+step --interactive "Claude Code (claude)" \
   "command -v claude" \
   "curl -fsSL https://claude.ai/install.sh | bash"
 
-step "opencode" \
+step --interactive "opencode" \
   "command -v opencode" \
   "curl -fsSL https://opencode.ai/install | bash"
 
