@@ -5,7 +5,12 @@ if [[ -n "$SSH_AUTH_SOCK" && "$SSH_AUTH_SOCK" != "$HOME/.ssh/agent.sock" ]]; the
 fi
 export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
 
-# --- Auto-attach tmux on SSH login (must be before anything touches the terminal) ---
+# --- Welcome screen (initial SSH login only, not inside tmux, not after exec zsh) ---
+if [[ -n "$SSH_CONNECTION" ]] && [[ -z "$TMUX" ]] && [[ -t 0 ]] && [[ -z "${WELCOME_SHOWN:-}" ]]; then
+  [[ -f "$HOME/zaeem_devbox/dotfiles/welcome.sh" ]] && source "$HOME/zaeem_devbox/dotfiles/welcome.sh"
+fi
+
+# --- Auto-attach tmux on SSH login ---
 if [[ -n "$SSH_CONNECTION" ]] && [[ -z "$TMUX" ]] && [[ -t 0 ]]; then
   exec tmux new-session -A -s main
 fi
@@ -24,6 +29,7 @@ setopt CORRECT
 
 # --- Aliases ---
 source ~/.aliases.sh
+alias bootstrap='bash ~/zaeem_devbox/dotfiles/bootstrap.sh'
 
 # --- devbox (manages node, python, go, ruby, rust, etc.) ---
 eval "$(devbox global shellenv)"

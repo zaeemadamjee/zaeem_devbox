@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# welcome.sh — shown on first login via stub ~/.zshrc until bootstrap completes.
-# Safe to re-run; exits immediately once bootstrap is complete.
+# welcome.sh — shown on every interactive SSH login.
+# Sourced from ~/.zshrc (outside tmux only) and from the pre-bootstrap stub.
+# WELCOME_SHOWN=1 is exported to prevent re-display after exec zsh.
 
-# Belt-and-suspenders check in case of manual invocation after bootstrap:
-[[ -f "$HOME/.bootstrap-complete" ]] && return 0 2>/dev/null || exit 0
+export WELCOME_SHOWN=1
 
 REPO="$HOME/zaeem_devbox"
 PROFILE="${DEVBOX_PROFILE:-$(head -1 "$HOME/.config/devbox/profile" 2>/dev/null | tr -d '\r\n' || echo '?')}"
+BOOTSTRAPPED=false
+[[ -f "$HOME/.bootstrap-complete" ]] && BOOTSTRAPPED=true
 
 # ---------------------------------------------------------------------------
 # Machine info
@@ -34,8 +36,9 @@ SYS_UPTIME="$(_machine_uptime)"
 _run_bootstrap() {
   if bash "$REPO/dotfiles/bootstrap.sh"; then
     touch "$HOME/.bootstrap-complete"
+    BOOTSTRAPPED=true
     echo ""
-    exec zsh
+    exec zsh  # WELCOME_SHOWN=1 is exported, so the new shell skips the welcome screen
   fi
 }
 
@@ -50,6 +53,13 @@ if ! command -v gum &>/dev/null; then
   return 1 2>/dev/null || exit 1
 fi
 
+# Build bootstrap status line
+if $BOOTSTRAPPED; then
+  _bootstrap_status="$(gum style --foreground 46 '✓ complete')"
+else
+  _bootstrap_status="$(gum style --foreground 202 '✗ not run')"
+fi
+
 echo
 gum style \
   --border rounded \
@@ -58,32 +68,28 @@ gum style \
   --margin "0 1" \
   "$(gum style --bold --foreground 212 '⬡  zaeem devbox')" \
   "" \
-  "Profile   $(gum style --foreground 99 "$PROFILE")" \
-  "Repo      $(gum style --foreground 240 "$REPO")" \
+  "Profile     $(gum style --foreground 99 "$PROFILE")" \
+  "Bootstrap   $_bootstrap_status" \
   "" \
-  "OS        $(gum style --foreground 244 "$SYS_OS")" \
-  "CPU       $(gum style --foreground 244 "$SYS_CPU")" \
-  "Memory    $(gum style --foreground 244 "$SYS_MEM")" \
-  "Disk      $(gum style --foreground 244 "$SYS_DISK")" \
-  "Uptime    $(gum style --foreground 244 "$SYS_UPTIME")" \
-  "" \
-  "$(gum style --foreground 240 'Run bootstrap to install tools, dotfiles, and shell config.')" \
-  "$(gum style --foreground 240 'Safe to run again at any time.')"
+  "OS          $(gum style --foreground 244 "$SYS_OS")" \
+  "CPU         $(gum style --foreground 244 "$SYS_CPU")" \
+  "Memory      $(gum style --foreground 244 "$SYS_MEM")" \
+  "Disk        $(gum style --foreground 244 "$SYS_DISK")" \
+  "Uptime      $(gum style --foreground 244 "$SYS_UPTIME")"
 echo
 
-if gum confirm --default=yes \
-    --prompt.foreground 212 \
-    --selected.background 99 \
-    "Run bootstrap now?"; then
-  echo
-  _run_bootstrap
-else
-  echo
-  gum style --foreground 240 \
-    "Run any time:" \
-    "  bash ~/zaeem_devbox/dotfiles/bootstrap.sh" \
-    "" \
-    "Check status only:" \
-    "  bash ~/zaeem_devbox/dotfiles/bootstrap.sh --check"
-  echo
+if ! $BOOTSTRAPPED; then
+  if gum confirm --default=yes \
+      --prompt.foreground 212 \
+      --selected.background 99 \
+      "Run bootstrap now?"; then
+    echo
+    _run_bootstrap
+  else
+    echo
+    gum style --foreground 240 \
+      "Run any time:      bootstrap" \
+      "Check status only: bootstrap --check"
+    echo
+  fi
 fi

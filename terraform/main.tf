@@ -148,6 +148,16 @@ SSH_CONFIG
 # Pre-bootstrap stub — replaced by bootstrap.sh with the real dotfiles/zshrc symlink.
 if [[ ! -f "$HOME/.bootstrap-complete" ]]; then
   REPO="$HOME/zaeem_devbox"
+
+  # Ensure GitHub host key is trusted on every login (idempotent).
+  # StrictHostKeyChecking=accept-new: auto-accepts new keys, rejects changed ones.
+  # Done here (not just in startup-script) so it applies even to pre-existing VMs.
+  mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+  if ! grep -q 'github.com' "$HOME/.ssh/config" 2>/dev/null; then
+    printf 'Host github.com\n  StrictHostKeyChecking accept-new\n' >> "$HOME/.ssh/config"
+    chmod 600 "$HOME/.ssh/config"
+  fi
+
   if [[ ! -d "$REPO" ]]; then
     if [[ -z "$${SSH_AUTH_SOCK:-}" ]]; then
       echo ""
