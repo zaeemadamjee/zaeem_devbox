@@ -59,8 +59,3 @@ variable "repos" {
   default     = []
 }
 
-variable "secrets" {
-  description = "GCP Secret Manager secret names to fetch on bootstrap (also used as env var names)"
-  type        = list(string)
-  default     = []
-}

@@ -2,7 +2,36 @@
 
 A fully reproducible GCP cloud dev box, provisioned from scratch with Terraform and configured via devbox + dotfiles. The goal is a single SSH command away from a complete dev environment — on any machine, after any reprovisioning. Nothing requires manual one-off steps: all infrastructure is declared in Terraform, all tools are pinned in `devbox/devbox.json`, and all shell config is committed in `dotfiles/`.
 
-**Workflow:** create a profile, run Terraform to create the VM, SSH in, and the bootstrap script wires everything up automatically on first login.
+**Workflow:** create a profile, run Terraform to create the VM, run `start.sh` to connect — the welcome screen walks you through bootstrap on first login.
+
+---
+
+## How it works
+
+```
+Terraform startup-script (runs once on provision)
+  → installs git, curl, zsh, gum
+  → creates zaeem user, sets zsh as default shell
+  → writes profile name to ~/.config/devbox/profile
+  → writes pre-bootstrap ~/.zshrc stub
+
+start.sh (run locally to connect)
+  → starts VM, waits for SSH + startup-script to finish
+  → copies scripts/profiles/<name>.env secrets to ~/.config/secrets.env
+  → installs Ghostty terminfo
+  → updates ~/.ssh/config with current ephemeral IP
+  → ssh devbox-<profile>
+
+On first interactive login (via the stub ~/.zshrc)
+  → clones zaeem_devbox repo (requires SSH agent forwarding)
+  → welcome screen prompts to run bootstrap
+
+bootstrap.sh (idempotent, re-runnable)
+  → installs devbox + pulls global packages
+  → symlinks all dotfiles
+  → installs TPM, otelcol, idle timer, Claude Code, opencode
+  → symlinks real ~/.zshrc — subsequent logins skip the welcome screen
+```
 
 ---
 
@@ -16,7 +45,6 @@ A profile declares:
 - VM machine type and disk size
 - SSH public keys (one per local machine that needs access)
 - Repos to clone into `~/workspace` on first login
-- GCP Secret Manager secrets to fetch on bootstrap
 - Whether to install the idle shutdown timer
 
 To add a new VM, copy an existing profile and update it:
@@ -25,6 +53,20 @@ To add a new VM, copy an existing profile and update it:
 cp scripts/profiles/personal.sh scripts/profiles/myproject.sh
 # edit scripts/profiles/myproject.sh
 ```
+
+---
+
+## Secrets
+
+Secrets are stored in a gitignored `.env` file alongside the profile and copied to the VM by `start.sh` before you connect:
+
+```bash
+# scripts/profiles/personal.env  (gitignored — never committed)
+export ANTHROPIC_API_KEY=sk-ant-...
+export SOME_OTHER_SECRET=...
+```
+
+`start.sh` copies this file to `~/.config/secrets.env` on the VM. The real `~/.zshrc` sources it on every login.
 
 ---
 
@@ -43,7 +85,7 @@ cp scripts/profiles/personal.sh scripts/profiles/myproject.sh
 
 ### 3. SSH Key
 
-- An ed25519 SSH key at `~/.ssh/zaeem_devbox` — `**scripts/setup-gcp-prereqs.sh` generates this for you**
+- An ed25519 SSH key at `~/.ssh/zaeem_devbox` — **`scripts/setup-gcp-prereqs.sh` generates this for you**
 - Add the public key content (`cat ~/.ssh/zaeem_devbox.pub`) to the `SSH_PUBLIC_KEYS` array in your profile
 - Repeat for each machine that needs access to the VM
 
@@ -55,19 +97,14 @@ cp scripts/profiles/personal.sh scripts/profiles/myproject.sh
 
 ### 5. GitHub SSH Access
 
-- Your GitHub account must have an SSH key so the VM can clone `git@github.com:zaeemadamjee/zaeem_devbox.git` on first boot
-- Your local SSH agent must be running with your GitHub key loaded (agent forwarding is enabled in `start.sh`)
+- Your GitHub account must have an SSH key so the VM can clone `git@github.com:zaeemadamjee/zaeem_devbox.git` on first login
+- Your local SSH agent must be running with the key loaded — `start.sh` warns early if it isn't
 
 ### 6. Update `dotfiles/gitconfig`
 
 - Hardcoded name/email — update with your actual identity before provisioning
 
-### 7. GCP Secrets
-
-- Any secrets listed in a profile's `SECRETS` array must exist in GCP Secret Manager in the profile's project
-- The secret name in Secret Manager must match the env var name exactly (e.g. `ANTHROPIC_API_KEY`)
-
-### 8. GCP Billing Alerts (optional but recommended)
+### 7. GCP Billing Alerts (optional but recommended)
 
 - Manual setup in GCP Console — the repo uses `$30 alert / $50 hard cap` — see `docs/billing-setup.md`
 
@@ -86,11 +123,14 @@ gcloud config set project <project-id>
 cp scripts/profiles/personal.sh scripts/profiles/<name>.sh
 # edit scripts/profiles/<name>.sh — set GCP_PROJECT, instance name, repos, etc.
 
-# 3. Run initialize — handles APIs, SSH key, state bucket, and terraform apply in one go
+# 3. (Optional) Create a secrets file for the profile
+echo 'export ANTHROPIC_API_KEY=sk-ant-...' > scripts/profiles/<name>.env
+
+# 4. Run initialize — handles APIs, SSH key, state bucket, and terraform apply in one go
 scripts/initialize.sh --profile <name>
 # (if your SSH key isn't in the profile yet, the script will print it and pause)
 
-# 4. Start and SSH in (bootstrap runs automatically on first login)
+# 5. Start and connect — bootstrap runs interactively on first login
 scripts/start.sh --profile <name>
 ```
 
@@ -119,7 +159,7 @@ scripts/stop.sh --profile personal
 scripts/reset.sh --profile personal
 ```
 
-The SSH config entry is named `devbox-<profile>` (e.g. `devbox-personal`), so you can also SSH directly:
+The SSH config entry is named `devbox-<profile>` (e.g. `devbox-personal`), so you can also connect directly after `start.sh` has run once:
 
 ```bash
 ssh devbox-personal
@@ -142,4 +182,3 @@ echo 'alias devbox="~/Documents/git/zaeem_devbox/scripts/start.sh --profile pers
 echo 'alias devbox-stop="~/Documents/git/zaeem_devbox/scripts/stop.sh --profile personal"' >> ~/.zshrc
 source ~/.zshrc
 ```
-

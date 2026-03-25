@@ -1,4 +1,5 @@
 .DS_Store
+scripts/profiles/*.env
 .worktrees/
 terraform/.terraform/
 terraform/*.tfstate

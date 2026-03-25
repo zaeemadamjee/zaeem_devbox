@@ -4,6 +4,7 @@ format = """
 $git_branch\
 $git_status\
 $gcloud\
+$python\
 $character
 """
 
@@ -29,28 +30,39 @@ subtle = "#24283b"    # darker background elements
 [directory]
 style = "bold cyan"
 truncate_to_repo = true
-format = "[$path]($style) / "
+format = "[$path]($style)"
 
 # ─── GIT BRANCH ───────────────────────────────────────────────────
 [git_branch]
 symbol = " "
 style = "bold purple"
-truncation_length = 20
+truncation_length = 35
 truncation_symbol = "…"
-format = "[$symbol$branch]($style) / "
+format = "/ [$symbol$branch]($style)"
 
 # ─── GIT STATUS ───────────────────────────────────────────────────
 [git_status]
 style = "yellow"
-format = "([$all_status$ahead_behind]($style)) / "
+format = "/ ([$all_status$ahead_behind]($style))"
 disabled = true
 
 # ─── GCLOUD ───────────────────────────────────────────────────────
 [gcloud]
 symbol = " "
 style = "bold blue"
-format = "[$symbol($project)]($style) "
+format = "/ [$symbol($project)]($style) "
 disabled = false
+
+# ─── PYTHON VENV ──────────────────────────────────────────────────
+[python]
+symbol = " "
+style = "muted"
+format = "/ [$symbol($virtualenv)]($style) "
+# Only shows when a virtualenv is active; hides python version noise
+pyenv_version_name = false
+detect_files = []
+detect_folders = []
+detect_extensions = []
 
 # ─── PROMPT CHARACTER ─────────────────────────────────────────────
 [character]

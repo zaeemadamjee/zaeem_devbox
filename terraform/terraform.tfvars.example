@@ -31,7 +31,3 @@ ssh_public_keys = [
 repos = [
   "git@github.com:zaeemadamjee/travel_agent.git",
 ]
-
-secrets = [
-  "ANTHROPIC_API_KEY",
-]

@@ -72,7 +72,6 @@ load_profile() {
   # Default optional arrays to empty if unset
   SSH_PUBLIC_KEYS=("${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}")
   REPOS=("${REPOS[@]+"${REPOS[@]}"}")
-  SECRETS=("${SECRETS[@]+"${SECRETS[@]}"}")
 }
 
 # ---------------------------------------------------------------------------
@@ -152,10 +151,6 @@ generate_tfvars() {
   local repos_hcl
   repos_hcl=$(_build_hcl_list "${REPOS[@]+"${REPOS[@]}"}")
 
-  # Build HCL list for secrets
-  local secrets_hcl
-  secrets_hcl=$(_build_hcl_list "${SECRETS[@]+"${SECRETS[@]}"}")
-
   cat > "$tmpfile" <<EOF
 project_id         = "${GCP_PROJECT}"
 region             = "${GCP_REGION}"
@@ -167,7 +162,6 @@ idle_timer_enabled = ${IDLE_TIMER_ENABLED}
 profile_name       = "${PROFILE_NAME}"
 ssh_public_keys    = ${ssh_keys_hcl}
 repos              = ${repos_hcl}
-secrets            = ${secrets_hcl}
 EOF
 }
 

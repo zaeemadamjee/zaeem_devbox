@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# profiles/personal.sh — Profile for the personal devbox VM.
+# profiles/mini.sh — Profile for the mini devbox VM.
 
-PROFILE_NAME="personal"
+PROFILE_NAME="mini"
 
 # --- GCP settings ---
 GCP_PROJECT="zaeem-dev"
-GCP_REGION="us-east4"
-GCP_INSTANCE_NAME="zaeem-devbox"
+GCP_REGION="us-central1"
+GCP_INSTANCE_NAME="zaeem-devbox-mini"
 
 # --- VM hardware ---
-VM_MACHINE_TYPE="e2-standard-2"
-VM_DISK_SIZE=50
+VM_MACHINE_TYPE="e2-micro"
+VM_DISK_SIZE=10
 
 # --- Features ---
-IDLE_TIMER_ENABLED=true
+IDLE_TIMER_ENABLED=false
 
 # --- SSH public keys ---
 # Add one entry per machine that needs SSH access to this VM.

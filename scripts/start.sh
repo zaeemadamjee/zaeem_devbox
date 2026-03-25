@@ -20,6 +20,18 @@ SSH_KEY="$HOME/.ssh/zaeem_devbox"
 SSH_USER="zaeem"
 SSH_CONFIG="$HOME/.ssh/config"
 SSH_HOST="devbox-${PROFILE_NAME}"
+SSH_OPTS=(-o StrictHostKeyChecking=no -o ConnectTimeout=30 -i "$SSH_KEY")
+
+# ---------------------------------------------------------------------------
+# Early agent check — warn now so the user can fix before connecting
+# ---------------------------------------------------------------------------
+if ! ssh-add -l &>/dev/null; then
+  echo ""
+  echo "  Warning: SSH agent has no keys loaded."
+  echo "  If this is a fresh VM, the repo clone will fail without agent forwarding."
+  echo "  Fix: ssh-add ~/.ssh/zaeem_devbox"
+  echo ""
+fi
 
 echo "==> Starting $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..."
 gcloud compute instances start "$GCP_INSTANCE_NAME" \
@@ -28,21 +40,21 @@ gcloud compute instances start "$GCP_INSTANCE_NAME" \
 echo "==> Waiting for SSH to be ready..."
 IP=""
 SSH_READY="false"
-for i in $(seq 1 60); do
+for i in $(seq 1 30); do
   IP=$(gcloud compute instances describe "$GCP_INSTANCE_NAME" \
     --zone="$GCP_ZONE" --project="$GCP_PROJECT" \
     --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
-  if [ -n "$IP" ] && ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
-       -o BatchMode=yes -i "$SSH_KEY" "${SSH_USER}@${IP}" true 2>/dev/null; then
+  if [ -n "$IP" ] && ssh "${SSH_OPTS[@]}" -o BatchMode=yes \
+       "${SSH_USER}@${IP}" true 2>/dev/null; then
     SSH_READY="true"
     break
   fi
-  echo "  attempt $i/60..."
-  sleep 3
+  echo "  attempt $i/30..."
+  sleep 5
 done
 
 if [ -z "$IP" ] || [ "$SSH_READY" != "true" ]; then
-  echo "ERROR: Could not reach VM over SSH after 60 attempts" >&2
+  echo "ERROR: Could not reach VM over SSH after 30 attempts" >&2
   exit 1
 fi
 
@@ -51,28 +63,47 @@ echo "==> VM is up at $IP"
 # Wait for the GCP startup script to fully complete before connecting.
 # It leaves a marker at /var/lib/startup-complete when done.
 echo "==> Waiting for startup script to complete..."
-for i in $(seq 1 40); do
-  if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o BatchMode=yes \
-       -i "$SSH_KEY" "${SSH_USER}@${IP}" \
+for i in $(seq 1 20); do
+  if ssh "${SSH_OPTS[@]}" -o BatchMode=yes "${SSH_USER}@${IP}" \
        "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
     echo "    Startup complete."
     break
   fi
-  echo "  still initializing... ($i/40)"
+  echo "  still initializing... ($i/20)"
   sleep 5
 done
 
 # Remove stale known_hosts entry — VM gets new host keys after each reset
 ssh-keygen -R "$IP" 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
+# Copy profile secrets file to VM if present (gitignored: scripts/profiles/<name>.env)
+# ---------------------------------------------------------------------------
+LOCAL_SECRETS="$SCRIPTS_DIR/profiles/${PROFILE_NAME}.env"
+if [[ -f "$LOCAL_SECRETS" ]]; then
+  echo "==> Copying secrets (${PROFILE_NAME}.env) to ~/.config/secrets.env..."
+  ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" "mkdir -p ~/.config && chmod 700 ~/.config"
+  scp -o StrictHostKeyChecking=no -i "$SSH_KEY" \
+    "$LOCAL_SECRETS" "${SSH_USER}@${IP}:.config/secrets.env"
+  ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" "chmod 600 ~/.config/secrets.env"
+  echo "    Done."
+else
+  echo "==> No secrets file at ${LOCAL_SECRETS} — skipping"
+fi
+
+# ---------------------------------------------------------------------------
+# Install Ghostty terminfo on the VM so the terminal renders correctly
+# ---------------------------------------------------------------------------
 echo "==> Copying Ghostty terminfo to devbox..."
-if infocmp -x | ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i "$SSH_KEY" "${SSH_USER}@${IP}" -- tic -x - 2>/dev/null; then
+if infocmp -x | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" -- tic -x - 2>/dev/null; then
   echo "    Ghostty terminfo installed."
 else
   echo "    Warning: could not install Ghostty terminfo (non-fatal, will retry on next start)."
 fi
 
+# ---------------------------------------------------------------------------
 # Patch or create ~/.ssh/config entry for this profile's VM
+# ---------------------------------------------------------------------------
 touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
 
@@ -107,14 +138,5 @@ EOF
   echo "==> Added $SSH_HOST to SSH config"
 fi
 
-# Warn if SSH agent has no keys loaded — bootstrap won't run without agent forwarding
-if ! ssh-add -l &>/dev/null; then
-  echo ""
-  echo "  Warning: SSH agent has no keys loaded."
-  echo "  Bootstrap will not run on the VM without agent forwarding."
-  echo "  Run: ssh-add ~/.ssh/zaeem_devbox"
-  echo ""
-fi
-
-echo "==> Connecting to $SSH_HOST (will auto-attach to tmux session)..."
+echo "==> Connecting to $SSH_HOST..."
 ssh "$SSH_HOST"

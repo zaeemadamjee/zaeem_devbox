@@ -48,11 +48,6 @@ resource "google_project_iam_member" "otelcol_logs" {
   member  = "serviceAccount:${google_service_account.otelcol.email}"
 }
 
-resource "google_project_iam_member" "devbox_secret_accessor" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.otelcol.email}"
-}
 
 resource "google_compute_firewall" "allow_ssh" {
   name    = "devbox-allow-ssh"
@@ -100,7 +95,6 @@ resource "google_compute_instance" "devbox" {
     devbox-profile            = var.profile_name
     devbox-idle-timer-enabled = tostring(var.idle_timer_enabled)
     devbox-repos              = join("\n", var.repos)
-    devbox-secrets            = join("\n", var.secrets)
 
     startup-script = <<-EOF
       #!/bin/bash
@@ -115,6 +109,14 @@ resource "google_compute_instance" "devbox" {
       apt-get update -y
       apt-get install -y git curl zsh
 
+      echo "[startup] Installing gum (charm.sh)..."
+      mkdir -p /etc/apt/keyrings
+      curl -fsSL https://repo.charm.sh/apt/gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null
+      echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" \
+        > /etc/apt/sources.list.d/charm.list
+      apt-get update -qq && apt-get install -y -qq gum
+
       echo "[startup] Ensuring zaeem user exists..."
       if ! id zaeem &>/dev/null; then
         useradd -m -s /bin/bash zaeem
@@ -122,28 +124,32 @@ resource "google_compute_instance" "devbox" {
       echo "zaeem ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zaeem
       chmod 440 /etc/sudoers.d/zaeem
 
-      echo "[startup] Writing first-login bootstrap trigger..."
+      echo "[startup] Writing profile name to ~/.config/devbox/profile..."
+      mkdir -p /home/zaeem/.config/devbox
+      printf '%s\n' "${var.profile_name}" > /home/zaeem/.config/devbox/profile
+      chown -R zaeem:zaeem /home/zaeem/.config
+
+      echo "[startup] Writing pre-bootstrap ~/.zshrc stub..."
       cat > /home/zaeem/.zshrc <<'ZSHRC'
-# Temporary .zshrc — clones zaeem_devbox and bootstraps on first SSH login.
-# Replaced by bootstrap.sh with the real dotfiles/zshrc symlink.
+# Pre-bootstrap stub — replaced by bootstrap.sh with the real dotfiles/zshrc symlink.
 if [[ ! -f "$HOME/.bootstrap-complete" ]]; then
-  if [[ -z "$${SSH_AUTH_SOCK:-}" ]]; then
-    echo ""
-    echo "  Bootstrap is ready but requires SSH agent forwarding."
-    echo "  Your local SSH agent must be running with your GitHub key loaded."
-    echo ""
-    echo "  To fix, run on your local machine:"
-    echo "    ssh-add ~/.ssh/zaeem_devbox"
-    echo "  Then reconnect."
-    echo ""
-  else
-    echo "==> First login: cloning zaeem_devbox..."
-    git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$HOME/zaeem_devbox"
-    echo "==> Running bootstrap..."
-    bash "$HOME/zaeem_devbox/dotfiles/bootstrap.sh" && touch "$HOME/.bootstrap-complete"
-    echo "==> Reloading shell with full config..."
-    exec zsh
+  REPO="$HOME/zaeem_devbox"
+  if [[ ! -d "$REPO" ]]; then
+    if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+      echo ""
+      echo "  ⚠  SSH agent required to clone zaeem_devbox."
+      echo "     Load your key locally:  ssh-add ~/.ssh/zaeem_devbox"
+      echo "     Then reconnect."
+      echo ""
+    elif command -v gum &>/dev/null; then
+      gum spin --spinner dot --title "  Cloning zaeem_devbox..." -- \
+        git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$REPO" 2>&1
+    else
+      echo "==> Cloning zaeem_devbox..."
+      git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$REPO"
+    fi
   fi
+  [[ -f "$REPO/dotfiles/welcome.sh" ]] && source "$REPO/dotfiles/welcome.sh"
 fi
 ZSHRC
       chown zaeem:zaeem /home/zaeem/.zshrc
@@ -153,7 +159,7 @@ ZSHRC
       usermod -s "$ZSH_PATH" zaeem
 
       touch "$MARKER"
-      echo "[startup] Done — VM ready. Full bootstrap runs on first SSH login."
+      echo "[startup] Done — VM ready."
     EOF
   }
 

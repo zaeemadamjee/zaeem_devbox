@@ -47,7 +47,7 @@ success "Region '$GCP_REGION' is valid."
 echo ""
 info "Step 1/4 — Enabling required GCP APIs on project '$GCP_PROJECT'..."
 
-for api in compute.googleapis.com storage.googleapis.com secretmanager.googleapis.com; do
+for api in compute.googleapis.com storage.googleapis.com; do
   if gcloud services list --project="$GCP_PROJECT" --filter="name:${api}" --format="value(name)" 2>/dev/null | grep -q "$api"; then
     success "  ${api} already enabled."
   else

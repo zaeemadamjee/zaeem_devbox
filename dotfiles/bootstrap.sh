@@ -1,147 +1,276 @@
 #!/usr/bin/env bash
-# bootstrap.sh — Set up dev box environment on a fresh Ubuntu 24.04 VM.
+# bootstrap.sh — Set up dev box environment on a Terraform-provisioned Ubuntu 24.04 VM.
 #
-# Runs automatically via GCP startup-script on first boot.
-# Can also be run manually:
-#   git clone https://github.com/zaeemadamjee/zaeem_devbox.git ~/zaeem_devbox
-#   bash ~/zaeem_devbox/dotfiles/bootstrap.sh
+# Run manually after first login (profile is required — no default):
+#   export DEVBOX_PROFILE=personal   # or: echo personal > ~/.config/devbox/profile
+#   bash ~/zaeem_devbox/dotfiles/bootstrap.sh [--check]
+#
+# --check   Print status of every component without installing anything.
+# (no flag)  Install or repair anything that is missing.
 #
 # Safe to re-run (idempotent).
+#
+# Note: git, curl, zsh, gum, and default shell are guaranteed by Terraform's
+# startup-script and do not need to be managed here.
 
 set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$DOTFILES_DIR/.." && pwd)"
 
-log() { echo "[bootstrap] $*"; }
+# ---------------------------------------------------------------------------
+# Flags
+# ---------------------------------------------------------------------------
+CHECK_ONLY=false
+for arg in "$@"; do
+  [[ "$arg" == "--check" ]] && CHECK_ONLY=true
+done
 
-# --- Install devbox (download binary directly — no interactive installer) ---
-if ! command -v devbox &>/dev/null; then
-  log "Installing devbox..."
-  curl -fsSL https://releases.jetify.com/devbox -o /tmp/devbox
-  sudo install -m 755 /tmp/devbox /usr/local/bin/devbox
-  rm /tmp/devbox
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; CYAN="\033[36m"; DIM="\033[2m"; RESET="\033[0m"
+
+if ! command -v gum &>/dev/null; then
+  echo ""
+  echo "  ✗  gum is not installed — it should have been installed by Terraform's startup-script."
+  echo "     Check /var/log/startup-script.log for errors."
+  echo ""
+  echo "     To install manually: sudo apt-get install -y gum"
+  echo "     Then re-run bootstrap."
+  echo ""
+  exit 1
 fi
 
-# --- Install devbox packages ---
-log "Installing devbox global packages..."
-devbox global pull "$REPO_ROOT/devbox/devbox.json"
+section() { echo; gum style --bold --foreground 99 "  ▸  $*"; echo; }
+ok()      { printf "  ${GREEN}✓${RESET}  %s\n" "$*"; }
+skip()    { printf "  ${GREEN}✓${RESET}  ${DIM}%s (already installed)${RESET}\n" "$*"; }
+doing()   { printf "  ${CYAN}→${RESET}  %s...\n" "$*"; }
+warn()    { printf "  ${YELLOW}⚠${RESET}  %s\n" "$*"; }
+fail()    { printf "  ${RED}✗${RESET}  %s\n" "$*"; }
 
-# Activate devbox so packages are available for the rest of bootstrap
-eval "$(devbox global shellenv)"
+# spin_or_run <title> <cmd> [args...]
+spin_or_run() {
+  local title="$1"; shift
+  gum spin --spinner dot --title "  ${title}..." -- "$@"
+}
 
-# --- Symlink dotfiles ---
-log "Symlinking dotfiles..."
-ln -sf "$DOTFILES_DIR/zshrc"          "$HOME/.zshrc"
-ln -sf "$DOTFILES_DIR/aliases.sh"     "$HOME/.aliases.sh"
-ln -sf "$DOTFILES_DIR/tmux.conf"      "$HOME/.tmux.conf"
-ln -sf "$DOTFILES_DIR/gitconfig"      "$HOME/.gitconfig"
-mkdir -p "$HOME/.config" "$HOME/.config/opencode"
-ln -sfT "$DOTFILES_DIR/nvim"          "$HOME/.config/nvim"
-ln -sf "$DOTFILES_DIR/starship.toml"  "$HOME/.config/starship.toml"
-ln -sf "$DOTFILES_DIR/opencode/opencode.json" "$HOME/.config/opencode/opencode.json"
+MISSING=()
+track_missing() { MISSING+=("$1"); }
 
-# --- Set zsh as default shell ---
-ZSH_PATH=$(command -v zsh)
-if [ "$SHELL" != "$ZSH_PATH" ]; then
-  log "Setting zsh as default shell..."
-  grep -qxF "$ZSH_PATH" /etc/shells || echo "$ZSH_PATH" | sudo tee -a /etc/shells
-  # Use usermod (works non-interactively); fall back to chsh for manual runs
-  if sudo usermod -s "$ZSH_PATH" "$(whoami)" 2>/dev/null; then
-    log "Shell set via usermod"
+# step <label> <check_expr> <install_body>
+#   check_expr  — bash expression; exit 0 = already done
+#   install_body — commands to run if not done (skipped in --check mode)
+step() {
+  local label="$1" check="$2" install="$3"
+  if eval "$check" &>/dev/null 2>&1; then
+    skip "$label"
+  elif $CHECK_ONLY; then
+    fail "$label"
+    track_missing "$label"
   else
-    chsh -s "$ZSH_PATH"
+    doing "$label"
+    eval "$install"
+    ok "$label"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Profile resolution (required — no default)
+# ---------------------------------------------------------------------------
+section "Profile"
+DEVBOX_PROFILE="${DEVBOX_PROFILE:-}"
+if [[ -z "$DEVBOX_PROFILE" ]] && [[ -f "$HOME/.config/devbox/profile" ]]; then
+  DEVBOX_PROFILE="$(head -1 "$HOME/.config/devbox/profile" | tr -d '\r\n')"
+fi
+DEVBOX_PROFILE="${DEVBOX_PROFILE#"${DEVBOX_PROFILE%%[![:space:]]*}"}"
+DEVBOX_PROFILE="${DEVBOX_PROFILE%"${DEVBOX_PROFILE##*[![:space:]]}"}"
+if [[ -z "${DEVBOX_PROFILE// }" ]]; then
+  fail "DEVBOX_PROFILE is not set"
+  echo "       Export DEVBOX_PROFILE=<name> or write one line to ~/.config/devbox/profile"
+  exit 1
+fi
+case "$DEVBOX_PROFILE" in
+  */*|*..*|\ *) fail "Invalid DEVBOX_PROFILE '${DEVBOX_PROFILE}' (no slashes, .., or spaces)"; exit 1 ;;
+esac
+PROFILE_SCRIPT="$REPO_ROOT/scripts/profiles/${DEVBOX_PROFILE}.sh"
+if [[ ! -f "$PROFILE_SCRIPT" ]]; then
+  fail "Profile script not found: ${PROFILE_SCRIPT}"
+  exit 1
+fi
+IDLE_TIMER_ENABLED=true
+# shellcheck source=/dev/null
+source "$PROFILE_SCRIPT"
+ok "Profile: ${DEVBOX_PROFILE}"
+
+idle_timer_enabled_bool() {
+  case "${IDLE_TIMER_ENABLED:-true}" in
+    false|False|FALSE|0|no|No|off|Off) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# devbox
+# ---------------------------------------------------------------------------
+section "devbox"
+step "devbox binary" \
+  "command -v devbox" \
+  "curl -fsSL https://releases.jetify.com/devbox -o /tmp/devbox && sudo install -m 755 /tmp/devbox /usr/local/bin/devbox && rm /tmp/devbox"
+
+if ! $CHECK_ONLY; then
+  spin_or_run "Pulling devbox global packages" devbox global pull "$REPO_ROOT/devbox/devbox.json"
+  eval "$(devbox global shellenv)"
+  ok "devbox global packages"
+else
+  step "devbox global packages synced" \
+    "devbox global list 2>/dev/null | grep -q ." \
+    ""
+fi
+
+# ---------------------------------------------------------------------------
+# Shell
+# ---------------------------------------------------------------------------
+section "Shell"
+
+step "tmux plugin manager (TPM)" \
+  "test -d \$HOME/.tmux/plugins/tpm" \
+  "git clone https://github.com/tmux-plugins/tpm \$HOME/.tmux/plugins/tpm"
+
+# ---------------------------------------------------------------------------
+# Dotfiles
+# ---------------------------------------------------------------------------
+section "Dotfiles"
+
+_link_check() {
+  local src="$1" dst="$2"
+  [[ -L "$dst" ]] && [[ "$(readlink "$dst")" == "$src" ]]
+}
+
+symlink_step() {
+  local label="$1" src="$2" dst="$3" flag="${4:-}"
+  local install_cmd
+  if [[ "$flag" == "-T" ]]; then
+    install_cmd="ln -sfT '$src' '$dst'"
+  else
+    install_cmd="ln -sf '$src' '$dst'"
+  fi
+  step "$label" "_link_check '$src' '$dst'" "$install_cmd"
+}
+
+symlink_step "~/.zshrc"                          "$DOTFILES_DIR/zshrc"                        "$HOME/.zshrc"
+symlink_step "~/.aliases.sh"                     "$DOTFILES_DIR/aliases.sh"                   "$HOME/.aliases.sh"
+symlink_step "~/.tmux.conf"                      "$DOTFILES_DIR/tmux.conf"                    "$HOME/.tmux.conf"
+symlink_step "~/.gitconfig"                      "$DOTFILES_DIR/gitconfig"                    "$HOME/.gitconfig"
+symlink_step "~/.config/nvim"                    "$DOTFILES_DIR/nvim"                         "$HOME/.config/nvim" "-T"
+symlink_step "~/.config/starship.toml"           "$DOTFILES_DIR/starship.toml"                "$HOME/.config/starship.toml"
+symlink_step "~/.config/opencode/opencode.json"  "$DOTFILES_DIR/opencode/opencode.json"       "$HOME/.config/opencode/opencode.json"
+
+if ! $CHECK_ONLY; then
+  mkdir -p "$HOME/.config" "$HOME/.config/opencode"
+fi
+
+# ---------------------------------------------------------------------------
+# Observability (otelcol-contrib)
+# ---------------------------------------------------------------------------
+section "Observability"
+OTELCOL_SRC="$(devbox global path 2>/dev/null)/.devbox/nix/profile/default/bin/otelcol-contrib"
+
+step "otelcol-contrib binary" \
+  "command -v otelcol-contrib" \
+  "[[ -f '$OTELCOL_SRC' ]] && sudo ln -sf '$OTELCOL_SRC' /usr/local/bin/otelcol-contrib || warn 'otelcol-contrib not found in devbox — is it in devbox.json?'"
+
+step "otelcol-contrib systemd service" \
+  "systemctl is-enabled otelcol-contrib &>/dev/null" \
+  "sudo mkdir -p /etc/otelcol-contrib && sudo cp '$DOTFILES_DIR/otelcol-contrib-config.yaml' /etc/otelcol-contrib/config.yaml && sudo cp '$DOTFILES_DIR/otelcol-contrib.service' /etc/systemd/system/otelcol-contrib.service && sudo systemctl daemon-reload && sudo systemctl enable --now otelcol-contrib"
+
+# ---------------------------------------------------------------------------
+# Idle timer
+# ---------------------------------------------------------------------------
+section "Idle timer"
+if idle_timer_enabled_bool; then
+  step "devbox-idle systemd timer" \
+    "systemctl is-enabled devbox-idle.timer &>/dev/null" \
+    "sudo cp '$DOTFILES_DIR/idle-check.sh' /usr/local/bin/idle-check.sh && sudo chmod +x /usr/local/bin/idle-check.sh && sudo cp '$DOTFILES_DIR/devbox-idle.service' /etc/systemd/system/devbox-idle.service && sudo cp '$DOTFILES_DIR/devbox-idle.timer' /etc/systemd/system/devbox-idle.timer && sudo systemctl daemon-reload && sudo systemctl enable --now devbox-idle.timer"
+else
+  if systemctl is-enabled devbox-idle.timer &>/dev/null; then
+    if $CHECK_ONLY; then
+      warn "devbox-idle timer is running but IDLE_TIMER_ENABLED=false in profile"
+    else
+      doing "removing idle timer (disabled in profile)"
+      sudo systemctl stop devbox-idle.timer 2>/dev/null || true
+      sudo systemctl disable devbox-idle.timer 2>/dev/null || true
+      sudo rm -f /etc/systemd/system/devbox-idle.timer /etc/systemd/system/devbox-idle.service /usr/local/bin/idle-check.sh
+      sudo systemctl daemon-reload && sudo systemctl reset-failed 2>/dev/null || true
+      ok "idle timer removed"
+    fi
+  else
+    skip "idle timer (disabled in profile)"
   fi
 fi
 
-# --- Install TPM (tmux plugin manager) ---
-if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
-  log "Installing TPM..."
-  git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
+# ---------------------------------------------------------------------------
+# CLI tools
+# ---------------------------------------------------------------------------
+section "CLI tools"
+step "Claude Code (claude)" \
+  "command -v claude" \
+  "curl -fsSL https://claude.ai/install.sh | bash"
+
+step "opencode" \
+  "command -v opencode" \
+  "curl -fsSL https://opencode.ai/install | bash"
+
+if ! $CHECK_ONLY; then
+  spin_or_run "Seeding tealdeer page cache" bash -c 'tldr --update >/dev/null 2>&1 || true'
+  ok "tealdeer page cache"
+  spin_or_run "Importing atuin history" bash -c 'atuin import auto 2>/dev/null || true'
+  ok "atuin history import"
 fi
 
-# --- Symlink otelcol-contrib from devbox to /usr/local/bin ---
-OTELCOL_SRC="$(devbox global path)/.devbox/nix/profile/default/bin/otelcol-contrib"
-if [ -f "$OTELCOL_SRC" ]; then
-  log "Symlinking otelcol-contrib to /usr/local/bin..."
-  sudo ln -sf "$OTELCOL_SRC" /usr/local/bin/otelcol-contrib
-fi
-
-# --- Install otelcol-contrib systemd service ---
-if [ -f "$DOTFILES_DIR/otelcol-contrib.service" ]; then
-  log "Installing otelcol-contrib service..."
-  sudo mkdir -p /etc/otelcol-contrib
-  sudo cp "$DOTFILES_DIR/otelcol-contrib-config.yaml" /etc/otelcol-contrib/config.yaml
-  sudo cp "$DOTFILES_DIR/otelcol-contrib.service" /etc/systemd/system/otelcol-contrib.service
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now otelcol-contrib
-  log "otelcol-contrib service enabled"
-fi
-
-# --- Seed tealdeer page cache ---
-tldr --update || true
-
-# --- Import shell history into atuin ---
-atuin import auto || true
-
-# --- Install Claude Code (native installer, auto-updates) ---
-if ! command -v claude &>/dev/null; then
-  log "Installing Claude Code..."
-  curl -fsSL https://claude.ai/install.sh | bash
-fi
-
-# --- Fetch secrets from GCP Secret Manager ---
-# Secret names are stored in instance metadata (set by Terraform from the profile).
-log "Fetching secrets from Secret Manager..."
-METADATA_ROOT="http://metadata.google.internal/computeMetadata/v1"
-GCP_TOKEN=$(curl -sf -H "Metadata-Flavor: Google" "$METADATA_ROOT/instance/service-accounts/default/token" | jq -r .access_token)
-GCP_PROJECT=$(curl -sf -H "Metadata-Flavor: Google" "$METADATA_ROOT/project/project-id")
-SECRETS_RAW=$(curl -sf -H "Metadata-Flavor: Google" "$METADATA_ROOT/instance/attributes/devbox-secrets" 2>/dev/null || echo "")
-mkdir -p "$HOME/.config"
-: > "$HOME/.config/secrets.env"
-chmod 600 "$HOME/.config/secrets.env"
-if [ -n "$SECRETS_RAW" ]; then
-  while IFS= read -r SECRET_NAME; do
-    [ -z "$SECRET_NAME" ] && continue
-    VALUE=$(curl -sf \
-      -H "Authorization: Bearer $GCP_TOKEN" \
-      "https://secretmanager.googleapis.com/v1/projects/$GCP_PROJECT/secrets/$SECRET_NAME/versions/latest:access" \
-      | jq -r .payload.data | base64 -d)
-    if [ -n "$VALUE" ]; then
-      printf 'export %s=%s\n' "$SECRET_NAME" "$VALUE" >> "$HOME/.config/secrets.env"
-      log "  $SECRET_NAME fetched"
-    else
-      log "  WARNING: Could not fetch secret '$SECRET_NAME'"
-    fi
-  done <<< "$SECRETS_RAW"
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+section "Secrets"
+# Secrets are copied from scripts/profiles/<name>.env on your local machine
+# by start.sh before you connect. Bootstrap just verifies the file is present.
+if [[ -s "$HOME/.config/secrets.env" ]]; then
+  ok "~/.config/secrets.env ($(wc -l < "$HOME/.config/secrets.env") entries)"
 else
-  log "  No secrets configured in instance metadata"
+  if $CHECK_ONLY; then
+    fail "~/.config/secrets.env (missing or empty — run start.sh to copy your .env file)"
+    track_missing "secrets"
+  else
+    warn "~/.config/secrets.env not found — run start.sh to copy your profile .env file"
+  fi
 fi
 
-# --- Install opencode ---
-if ! command -v opencode &>/dev/null; then
-  log "Installing opencode..."
-  curl -fsSL https://opencode.ai/install | bash
-fi
-
-# --- Install systemd idle timer (only if enabled in profile) ---
-IDLE_TIMER_ENABLED=$(curl -sf \
-  -H "Metadata-Flavor: Google" \
-  "$METADATA_ROOT/instance/attributes/devbox-idle-timer-enabled" 2>/dev/null || echo "true")
-if [ "$IDLE_TIMER_ENABLED" = "true" ] && [ -f "$DOTFILES_DIR/idle-check.sh" ]; then
-  log "Installing idle-stop timer..."
-  sudo cp "$DOTFILES_DIR/idle-check.sh" /usr/local/bin/idle-check.sh
-  sudo chmod +x /usr/local/bin/idle-check.sh
-  sudo cp "$DOTFILES_DIR/devbox-idle.service" /etc/systemd/system/devbox-idle.service
-  sudo cp "$DOTFILES_DIR/devbox-idle.timer"   /etc/systemd/system/devbox-idle.timer
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now devbox-idle.timer
-  log "Idle timer enabled (20min threshold, checks every 10min)"
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+if $CHECK_ONLY; then
+  if [[ ${#MISSING[@]} -eq 0 ]]; then
+    echo
+    gum style --border rounded --padding "1 2" --border-foreground 46 \
+      "$(gum style --foreground 46 --bold '✓  All components installed')"
+    echo
+  else
+    echo
+    gum style --border rounded --padding "1 2" --border-foreground 202 \
+      "$(gum style --foreground 202 --bold "✗  ${#MISSING[@]} component(s) missing:")" \
+      "" \
+      "$(printf '  %s\n' "${MISSING[@]}")" \
+      "" \
+      "$(gum style --foreground 240 'Run bootstrap without --check to install.')"
+    echo
+    exit 1
+  fi
 else
-  log "Idle timer disabled for this profile — skipping"
+  echo
+  gum style --border rounded --padding "1 2" --border-foreground 46 \
+    "$(gum style --foreground 46 --bold '✓  Bootstrap complete')" \
+    "" \
+    "$(gum style --foreground 240 'Log out and back in for shell changes to take effect.')" \
+    "$(gum style --foreground 240 "You will auto-attach to a tmux session named 'main' on login.")"
+  echo
 fi
-
-log ""
-log "Bootstrap complete!"
-log "Log out and back in for shell change to take effect."
-log "You will auto-attach to a tmux session named 'main' on login."
