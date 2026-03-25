@@ -71,7 +71,7 @@ timed_spin() {
   local t0; t0=$(_t0)
   # shellcheck disable=SC2086
   gum spin $show_output --spinner dot --title "  ${title}..." -- "$@"
-  ok "${title}  $(gum style --dim "$(_elapsed "$t0")")"
+  ok "${title}  $(gum style --faint "$(_elapsed "$t0")")"
 }
 
 MISSING=()
@@ -90,7 +90,7 @@ step() {
   else
     local t0; t0=$(_t0)
     gum spin --spinner dot --title "  ${label}..." -- bash -c "$install"
-    ok "${label}  $(gum style --dim "$(_elapsed "$t0")")"
+    ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
   fi
 }
 
