@@ -59,3 +59,9 @@ variable "repos" {
   default     = []
 }
 
+variable "static_ip" {
+  description = "Reserve a static external IP address for the VM. When false, an ephemeral IP is assigned (changes on every reset)."
+  type        = bool
+  default     = false
+}
+

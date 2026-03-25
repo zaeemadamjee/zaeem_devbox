@@ -148,15 +148,30 @@ step "devbox binary" \
   "command -v devbox" \
   "curl -fsSL https://releases.jetify.com/devbox -o /tmp/devbox && sudo install -m 755 /tmp/devbox /usr/local/bin/devbox && rm /tmp/devbox"
 
+# Pre-install Nix non-interactively before devbox global pull.
+#
+# The nix-installer reads its "Press enter to continue" confirmation prompt from
+# /dev/tty directly, bypassing gum spin's stdin management — so env var overrides
+# like NIX_INSTALLER_NO_CONFIRM have no effect and the prompt leaks through.
+#
+# Using --no-confirm on the installer CLI is the only reliable way to suppress it.
+# When devbox global pull runs and finds Nix already installed, it skips its own
+# installer entirely — no prompts, no "To get started using Nix" spam.
+step --stream "Nix package manager" \
+  "command -v nix" \
+  "curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm"
+
+# Source Nix into the current shell — the step above ran in a subshell so PATH
+# was not updated in this process.
+# shellcheck source=/dev/null
+[[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]] && \
+  source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
 if ! $CHECK_ONLY; then
-  # NIX_INSTALLER_NO_CONFIRM suppresses the Determinate Systems nix-installer's
-  # "Press enter to continue" prompts, making the install fully automated.
-  # With no prompts, --show-output streams Nix's progress cleanly below the spinner.
   local_t0=$(_t0)
-  NIX_INSTALLER_NO_CONFIRM=true \
-    gum spin --show-output --spinner dot \
-      --title "  devbox global packages (first run installs Nix — may take a few minutes)..." -- \
-      devbox global pull "$REPO_ROOT/devbox/devbox.json"
+  gum spin --show-output --spinner dot \
+    --title "  devbox global packages..." -- \
+    devbox global pull "$REPO_ROOT/devbox/devbox.json"
   ok "devbox global packages  $(gum style --faint "$(_elapsed "$local_t0")")"
   eval "$(devbox global shellenv)"
 else
@@ -259,6 +274,37 @@ step --stream "opencode" \
 if ! $CHECK_ONLY; then
   timed_spin "Seeding tealdeer page cache" bash -c 'tldr --update >/dev/null 2>&1 || true'
   timed_spin "Importing atuin history"     bash -c 'atuin import auto 2>/dev/null || true'
+fi
+
+# ---------------------------------------------------------------------------
+# Workspace repos
+# ---------------------------------------------------------------------------
+section "Workspace repos"
+
+# Fetch repo list from GCE instance metadata (set by Terraform from the profile).
+_REPOS_RAW=$(curl -sf \
+  --connect-timeout 5 \
+  -H "Metadata-Flavor: Google" \
+  "http://metadata.google.internal/computeMetadata/v1/instance/attributes/devbox-repos" \
+  2>/dev/null || true)
+
+if [[ -z "$_REPOS_RAW" ]]; then
+  skip "workspace repos (none configured in profile)"
+else
+  if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+    warn "SSH agent not forwarded — private repo clones may fail (reconnect with ssh -A)"
+  fi
+  if ! $CHECK_ONLY; then
+    mkdir -p "$HOME/workspace"
+  fi
+  while IFS= read -r _repo_url; do
+    [[ -z "$_repo_url" ]] && continue
+    _repo_name=$(basename "$_repo_url" .git)
+    _repo_dest="$HOME/workspace/$_repo_name"
+    step "$_repo_name" \
+      "test -d '$_repo_dest'" \
+      "git clone '$_repo_url' '$_repo_dest'"
+  done <<< "$_REPOS_RAW"
 fi
 
 # ---------------------------------------------------------------------------

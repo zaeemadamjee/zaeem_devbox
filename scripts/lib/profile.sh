@@ -69,6 +69,9 @@ load_profile() {
   # GCP_ZONE is optional — if unset, Terraform picks one from the region
   GCP_ZONE="${GCP_ZONE:-}"
 
+  # STATIC_IP is optional — defaults to false (ephemeral IP)
+  STATIC_IP="${STATIC_IP:-false}"
+
   # Default optional arrays to empty if unset
   SSH_PUBLIC_KEYS=("${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}")
   REPOS=("${REPOS[@]+"${REPOS[@]}"}")
@@ -159,6 +162,7 @@ instance_name      = "${GCP_INSTANCE_NAME}"
 machine_type       = "${VM_MACHINE_TYPE}"
 disk_size          = ${VM_DISK_SIZE}
 idle_timer_enabled = ${IDLE_TIMER_ENABLED}
+static_ip          = ${STATIC_IP}
 profile_name       = "${PROFILE_NAME}"
 ssh_public_keys    = ${ssh_keys_hcl}
 repos              = ${repos_hcl}

@@ -62,6 +62,12 @@ resource "google_compute_firewall" "allow_ssh" {
   target_tags   = ["devbox"]
 }
 
+resource "google_compute_address" "devbox" {
+  count  = var.static_ip ? 1 : 0
+  name   = "${var.instance_name}-ip"
+  region = var.region
+}
+
 resource "google_compute_instance" "devbox" {
   name         = var.instance_name
   machine_type = var.machine_type
@@ -79,7 +85,10 @@ resource "google_compute_instance" "devbox" {
 
   network_interface {
     network = "default"
-    access_config {}  # ephemeral external IP
+    access_config {
+      # nat_ip = null → ephemeral IP; set to reserved address when static_ip = true
+      nat_ip = var.static_ip ? google_compute_address.devbox[0].address : null
+    }
   }
 
   service_account {

@@ -67,15 +67,6 @@ export PATH="$PATH:$HOME/go/bin"
 # --- zoxide (smart cd) ---
 eval "$(zoxide init zsh)"
 
-# --- First login: clone repos (needs SSH agent) ---
-REPOS_MARKER="$HOME/.repos-cloned"
-CLONE_SCRIPT="$HOME/zaeem_devbox/scripts/clone-repos.sh"
-if [[ ! -f "$REPOS_MARKER" ]] && [[ -f "$CLONE_SCRIPT" ]] && [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
-  if bash "$CLONE_SCRIPT"; then
-    touch "$REPOS_MARKER"
-  fi
-fi
-
 # opencode
 export PATH=/home/zaeem/.opencode/bin:$PATH
 export PATH="$HOME/.npm-global/bin:$PATH"
