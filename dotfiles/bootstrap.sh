@@ -235,7 +235,12 @@ section "Secrets"
 # Secrets are copied from scripts/profiles/<name>.env on your local machine
 # by start.sh before you connect. Bootstrap just verifies the file is present.
 if [[ -s "$HOME/.config/secrets.env" ]]; then
-  ok "~/.config/secrets.env ($(wc -l < "$HOME/.config/secrets.env") entries)"
+  # Extract variable names from lines matching: export VAR=... or VAR=...
+  mapfile -t _SECRET_VARS < <(grep -oP '^(export\s+)?\K[A-Z_][A-Z0-9_]+(?==)' "$HOME/.config/secrets.env" 2>/dev/null || true)
+  ok "~/.config/secrets.env (${#_SECRET_VARS[@]} vars)"
+  for _var in "${_SECRET_VARS[@]}"; do
+    printf "  $(gum style --foreground 240 '  ·  %s')\n" "$_var"
+  done
 else
   if $CHECK_ONLY; then
     fail "~/.config/secrets.env (missing or empty — run start.sh to copy your .env file)"

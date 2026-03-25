@@ -129,24 +129,35 @@ resource "google_compute_instance" "devbox" {
       printf '%s\n' "${var.profile_name}" > /home/zaeem/.config/devbox/profile
       chown -R zaeem:zaeem /home/zaeem/.config
 
+      echo "[startup] Configuring SSH for zaeem..."
+      mkdir -p /home/zaeem/.ssh
+      chmod 700 /home/zaeem/.ssh
+      # StrictHostKeyChecking=accept-new: auto-trust new keys, reject changed keys (MITM protection).
+      # This is deterministic — no network call needed, so no timing issues at early boot.
+      cat > /home/zaeem/.ssh/config <<'SSH_CONFIG'
+Host github.com
+  StrictHostKeyChecking accept-new
+SSH_CONFIG
+      chmod 600 /home/zaeem/.ssh/config
+      # Also try ssh-keyscan as belt-and-suspenders (may fail on early boot — non-fatal).
+      ssh-keyscan -H github.com >> /home/zaeem/.ssh/known_hosts 2>/dev/null || true
+      chown -R zaeem:zaeem /home/zaeem/.ssh
+
       echo "[startup] Writing pre-bootstrap ~/.zshrc stub..."
       cat > /home/zaeem/.zshrc <<'ZSHRC'
 # Pre-bootstrap stub — replaced by bootstrap.sh with the real dotfiles/zshrc symlink.
 if [[ ! -f "$HOME/.bootstrap-complete" ]]; then
   REPO="$HOME/zaeem_devbox"
   if [[ ! -d "$REPO" ]]; then
-    if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+    if [[ -z "$${SSH_AUTH_SOCK:-}" ]]; then
       echo ""
       echo "  ⚠  SSH agent required to clone zaeem_devbox."
       echo "     Load your key locally:  ssh-add ~/.ssh/zaeem_devbox"
       echo "     Then reconnect."
       echo ""
-    elif command -v gum &>/dev/null; then
-      gum spin --spinner dot --title "  Cloning zaeem_devbox..." -- \
-        git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$REPO" 2>&1
     else
-      echo "==> Cloning zaeem_devbox..."
-      git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$REPO"
+      gum spin --spinner dot --title "  Cloning zaeem_devbox..." -- \
+        timeout 60 git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$REPO"
     fi
   fi
   [[ -f "$REPO/dotfiles/welcome.sh" ]] && source "$REPO/dotfiles/welcome.sh"
