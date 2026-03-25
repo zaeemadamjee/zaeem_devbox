@@ -10,8 +10,6 @@ set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/lib/profile.sh"
-source "$SCRIPTS_DIR/lib/ui.sh"
-require_gum
 
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"

@@ -25,6 +25,6 @@ adjust-cell-height = 1
 # window controls
 window-decoration = true
 window-padding-x = 2
-window-padding-y = 2
+window-padding-y = 4
 window-padding-balance = true
 window-save-state = always

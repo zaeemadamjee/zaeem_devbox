@@ -16,8 +16,6 @@ set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/lib/profile.sh"
-source "$SCRIPTS_DIR/lib/ui.sh"
-require_gum
 
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
@@ -32,10 +30,13 @@ section "Validate"
 
 if ! gcloud compute regions describe "$GCP_REGION" --project="$GCP_PROJECT" &>/dev/null; then
   fail "Region '$GCP_REGION' is not valid in project '$GCP_PROJECT'."
-  echo "" >&2
-  echo "  Valid regions:" >&2
-  gcloud compute regions list --project="$GCP_PROJECT" --format="value(name)" | sort | sed 's/^/    /' >&2
-  echo "" >&2
+  echo >&2
+  gum style --foreground 244 "  Valid regions:" >&2
+  gcloud compute regions list --project="$GCP_PROJECT" --format="value(name)" 2>/dev/null \
+    | sort | while IFS= read -r r; do
+        gum style --foreground 135 "    ·  $r" >&2
+      done
+  echo >&2
   exit 1
 fi
 ok "Region '$GCP_REGION' is valid"
@@ -120,9 +121,7 @@ section "Step 4/4 — Terraform"
 
 terraform_init_profile
 
-TMPVARS="/tmp/devbox-profile-${PROFILE_NAME}.tfvars"
-trap 'rm -f "$TMPVARS"' EXIT
-generate_tfvars "$TMPVARS"
+setup_tfvars
 
 cd "$TERRAFORM_DIR"
 

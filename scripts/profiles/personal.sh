@@ -13,7 +13,7 @@ VM_MACHINE_TYPE="e2-standard-2"
 VM_DISK_SIZE=50
 
 # --- Features ---
-IDLE_TIMER_ENABLED=true
+IDLE_TIMER_ENABLED=false
 STATIC_IP=false
 
 # --- SSH public keys ---

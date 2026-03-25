@@ -10,8 +10,6 @@ set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/lib/profile.sh"
-source "$SCRIPTS_DIR/lib/ui.sh"
-require_gum
 
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
@@ -26,16 +24,14 @@ gum style --border rounded --padding "1 2" --border-foreground 202 \
 echo
 
 if ! gum confirm "Destroy and recreate $GCP_INSTANCE_NAME?"; then
-  echo "  Aborted."
+  warn "Aborted."
   exit 0
 fi
 
 section "Terraform"
 terraform_init_profile
 
-TMPVARS="/tmp/devbox-profile-${PROFILE_NAME}.tfvars"
-trap 'rm -f "$TMPVARS"' EXIT
-generate_tfvars "$TMPVARS"
+setup_tfvars
 
 cd "$TERRAFORM_DIR"
 

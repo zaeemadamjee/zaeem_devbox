@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# lib/profile.sh — Shared profile loading and Terraform helpers for devbox scripts.
+# lib/profile.sh — Shared profile loading, Terraform helpers, and UI setup.
 #
-# Source this file at the top of each operational script:
-#   source "$(dirname "${BASH_SOURCE[0]}")/lib/profile.sh"   # from scripts/
-#   source "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib/profile.sh"  # from elsewhere
+# Source this file at the top of each operational script — it sources lib/ui.sh
+# and calls require_gum automatically, so no further setup is needed:
+#
+#   SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#   source "$SCRIPTS_DIR/lib/profile.sh"
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
 TERRAFORM_DIR="$REPO_ROOT/terraform"
+
+source "$SCRIPTS_DIR/lib/ui.sh"
+require_gum
 
 # ---------------------------------------------------------------------------
 # parse_profile_flag "$@"
@@ -29,9 +34,8 @@ parse_profile_flag() {
   done
 
   if [[ -z "$profile" ]]; then
-    echo "" >&2
-    echo "  Error: --profile <name> is required" >&2
-    echo "" >&2
+    echo >&2
+    gum style --foreground 196 "  ✗  --profile <name> is required" >&2
     _list_profiles >&2
     exit 1
   fi
@@ -48,20 +52,18 @@ load_profile() {
   local profile_file="$SCRIPTS_DIR/profiles/${profile_name}.sh"
 
   if [[ ! -f "$profile_file" ]]; then
-    echo "" >&2
-    echo "  Error: Profile not found: '$profile_name'" >&2
-    echo "" >&2
+    echo >&2
+    gum style --foreground 196 "  ✗  Profile not found: '$profile_name'" >&2
     _list_profiles >&2
     exit 1
   fi
 
   source "$profile_file"
 
-  # Validate required scalar variables
   local required=(PROFILE_NAME GCP_PROJECT GCP_REGION GCP_INSTANCE_NAME VM_MACHINE_TYPE VM_DISK_SIZE IDLE_TIMER_ENABLED)
   for var in "${required[@]}"; do
     if [[ -z "${!var:-}" ]]; then
-      echo "  Error: Profile '$profile_name' is missing required variable: $var" >&2
+      gum style --foreground 196 "  ✗  Profile '$profile_name' is missing required variable: $var" >&2
       exit 1
     fi
   done
@@ -87,14 +89,16 @@ check_gcp_project() {
   active_project=$(gcloud config get-value project 2>/dev/null)
 
   if [[ "$active_project" != "$GCP_PROJECT" ]]; then
-    echo "" >&2
-    echo "  Error: GCP project mismatch" >&2
-    echo "" >&2
-    printf "  Profile '%-30s expects project: %s\n" "${PROFILE_NAME}'" "$GCP_PROJECT" >&2
-    printf "  Currently active project:%*s%s\n" 16 "" "$active_project" >&2
-    echo "" >&2
-    echo "  Fix: gcloud config set project $GCP_PROJECT" >&2
-    echo "" >&2
+    echo >&2
+    gum style --border rounded --padding "1 2" --border-foreground 196 \
+      "$(gum style --foreground 196 --bold "✗  GCP project mismatch")" \
+      "" \
+      "  Profile $(gum style --bold "'${PROFILE_NAME}'")" \
+      "  Expected:  $(gum style --foreground 46  "$GCP_PROJECT")" \
+      "  Active:    $(gum style --foreground 196 "$active_project")" \
+      "" \
+      "$(gum style --foreground 240 "Fix: gcloud config set project $GCP_PROJECT")" >&2
+    echo >&2
     exit 1
   fi
 }
@@ -114,8 +118,10 @@ resolve_instance_zone() {
     --filter="name=${GCP_INSTANCE_NAME}" \
     --format="value(zone)" 2>/dev/null | head -1)
   if [[ -z "$GCP_ZONE" ]]; then
-    echo "  Error: Could not find instance '$GCP_INSTANCE_NAME' in project '$GCP_PROJECT'." >&2
-    echo "  Has the VM been provisioned? Run: ./scripts/initialize.sh --profile $PROFILE_NAME" >&2
+    echo >&2
+    gum style --foreground 196 "  ✗  Instance '$GCP_INSTANCE_NAME' not found in project '$GCP_PROJECT'." >&2
+    gum style --foreground 240 "     Has the VM been provisioned? Run: ./scripts/initialize.sh --profile $PROFILE_NAME" >&2
+    echo >&2
     exit 1
   fi
 }
@@ -127,15 +133,23 @@ resolve_instance_zone() {
 # ---------------------------------------------------------------------------
 terraform_init_profile() {
   local bucket="${GCP_PROJECT}-zaeem-devbox-tf-state"
-  echo "==> Initializing Terraform for profile '$PROFILE_NAME'..."
-  cd "$TERRAFORM_DIR"
-  terraform init -reconfigure \
-    -backend-config="bucket=${bucket}" \
-    -backend-config="prefix=${PROFILE_NAME}" \
-    -input=false \
-    -no-color > /dev/null
-  echo "    State: gs://${bucket}/${PROFILE_NAME}"
+  gum spin --spinner dot --title "  Initializing Terraform (profile: $PROFILE_NAME)..." -- \
+    bash -c "cd '$TERRAFORM_DIR' && terraform init -reconfigure \
+      -backend-config='bucket=${bucket}' \
+      -backend-config='prefix=${PROFILE_NAME}' \
+      -input=false -no-color > /dev/null"
+  ok "Terraform initialized  $(gum style --faint "gs://${bucket}/${PROFILE_NAME}")"
+}
 
+# ---------------------------------------------------------------------------
+# setup_tfvars
+#   Writes profile variables to a deterministic temp file, registers a cleanup
+#   trap, and exports TMPVARS for use with terraform apply -var-file="$TMPVARS".
+# ---------------------------------------------------------------------------
+setup_tfvars() {
+  TMPVARS="/tmp/devbox-profile-${PROFILE_NAME}.tfvars"
+  trap 'rm -f "$TMPVARS"' EXIT
+  generate_tfvars "$TMPVARS"
 }
 
 # ---------------------------------------------------------------------------
@@ -146,11 +160,9 @@ terraform_init_profile() {
 generate_tfvars() {
   local tmpfile="$1"
 
-  # Build HCL list for ssh_public_keys
   local ssh_keys_hcl
   ssh_keys_hcl=$(_build_hcl_list "${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}")
 
-  # Build HCL list for repos
   local repos_hcl
   repos_hcl=$(_build_hcl_list "${REPOS[@]+"${REPOS[@]}"}")
 
@@ -174,20 +186,19 @@ EOF
 # ---------------------------------------------------------------------------
 _list_profiles() {
   local profiles_dir="$SCRIPTS_DIR/profiles"
+  echo >&2
   if compgen -G "$profiles_dir/*.sh" > /dev/null 2>&1; then
-    echo "  Available profiles:"
+    gum style --foreground 244 "  Available profiles:" >&2
     for f in "$profiles_dir"/*.sh; do
-      echo "    $(basename "$f" .sh)"
+        gum style --foreground 135 "    ·  $(basename "$f" .sh)" >&2
     done
   else
-    echo "  No profiles found in scripts/profiles/"
+    gum style --foreground 244 "  No profiles found in scripts/profiles/" >&2
   fi
-  echo ""
+  echo >&2
 }
 
 _build_hcl_list() {
-  # Builds an HCL list literal from the given values.
-  # Usage: _build_hcl_list "${MY_ARRAY[@]}"
   if [[ $# -eq 0 ]]; then
     echo "[]"
     return
