@@ -79,6 +79,7 @@ export SOME_OTHER_SECRET=...
 
 ### 2. Local CLI Tools (on your Mac)
 
+- `gum` — TUI toolkit used by all local scripts (`brew install gum`)
 - `gcloud` CLI — authenticated (`gcloud auth login`)
 - `terraform` >= 1.6 (`brew tap hashicorp/tap && brew install hashicorp/tap/terraform`)
 - `git`, `ssh`, `curl`, `python3` — all standard on macOS

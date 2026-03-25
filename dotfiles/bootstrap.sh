@@ -63,7 +63,6 @@ fail()    { printf "  ${RED}✗${RESET}  %s\n" "$*"; }
 
 # timed_spin [--show-output] <title> <cmd> [args...]
 # Runs cmd under a gum spinner and prints ✓ with elapsed time when done.
-# Use --show-output for commands whose live output is informative (e.g. devbox pull).
 timed_spin() {
   local show_output=""
   [[ "${1:-}" == "--show-output" ]] && { show_output="--show-output"; shift; }
@@ -82,9 +81,9 @@ track_missing() { MISSING+=("$1"); }
 #   install_body — shell command string; skipped in --check mode
 #
 #   Default:  gum spin with hidden output — for fast silent commands (symlinks, copies, etc.)
-#   --stream: gum spin --show-output — for noisy-but-automated installers that stream
-#             progress text. Output scrolls below the spinner; timing prints on completion.
-#             Commands must not prompt for input (use NIX_INSTALLER_NO_CONFIRM etc.).
+#   --stream: gum spin with output captured to a temp log — for long-running or noisy
+#             installers. Shows a clean spinner; on failure prints the last 30 lines and
+#             leaves the full log in /tmp for inspection.
 step() {
   local stream=false
   [[ "${1:-}" == "--stream" ]] && { stream=true; shift; }
@@ -97,11 +96,27 @@ step() {
   else
     local t0; t0=$(_t0)
     if $stream; then
-      gum spin --show-output --spinner dot --title "  ${label}..." -- bash -c "$install"
+      local _log
+      _log="$(mktemp /tmp/bootstrap-XXXXXX.log)"
+      if gum spin --spinner dot --title "  ${label}..." -- \
+           bash -c "{ $install; } >'$_log' 2>&1"; then
+        ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
+        rm -f "$_log"
+      else
+        fail "${label}  $(gum style --faint "$(_elapsed "$t0")")"
+        if [[ -s "$_log" ]]; then
+          printf '\n'
+          gum style --faint "  Last 30 lines (full log: $_log):"
+          tail -30 "$_log" | sed 's/^/    /'
+          printf '\n'
+        fi
+        rm -f "$_log"
+        return 1
+      fi
     else
       gum spin --spinner dot --title "  ${label}..." -- bash -c "$install"
+      ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
     fi
-    ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
   fi
 }
 
@@ -169,10 +184,22 @@ step --stream "Nix package manager" \
 
 if ! $CHECK_ONLY; then
   local_t0=$(_t0)
-  gum spin --show-output --spinner dot \
-    --title "  devbox global packages..." -- \
-    devbox global pull "$REPO_ROOT/devbox/devbox.json"
-  ok "devbox global packages  $(gum style --faint "$(_elapsed "$local_t0")")"
+  _devbox_log="$(mktemp /tmp/bootstrap-devbox-XXXXXX.log)"
+  if gum spin --spinner dot \
+       --title "  devbox global packages (first run installs Nix — may take a few minutes)..." -- \
+       bash -c "devbox global pull '$REPO_ROOT/devbox/devbox.json' >'$_devbox_log' 2>&1"; then
+    ok "devbox global packages  $(gum style --faint "$(_elapsed "$local_t0")")"
+    rm -f "$_devbox_log"
+  else
+    fail "devbox global packages  $(gum style --faint "$(_elapsed "$local_t0")")"
+    if [[ -s "$_devbox_log" ]]; then
+      printf '\n'
+      gum style --faint "  Last 30 lines (full log: $_devbox_log):"
+      tail -30 "$_devbox_log" | sed 's/^/    /'
+      printf '\n'
+    fi
+    exit 1
+  fi
   eval "$(devbox global shellenv)"
 else
   step "devbox global packages synced" \

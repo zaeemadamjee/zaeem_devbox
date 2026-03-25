@@ -10,35 +10,46 @@ set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/lib/profile.sh"
+source "$SCRIPTS_DIR/lib/ui.sh"
+require_gum
 
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
 check_gcp_project
 
-echo "==> This will DESTROY and RECREATE $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)."
-echo "    All data on the VM disk will be permanently lost."
-echo ""
-read -r -p "    Are you sure? (yes/no): " CONFIRM
-if [ "$CONFIRM" != "yes" ]; then
-  echo "Aborted."
+echo
+gum style --border rounded --padding "1 2" --border-foreground 202 \
+  "$(gum style --foreground 202 --bold "⚠  DESTRUCTIVE OPERATION")" \
+  "" \
+  "  This will DESTROY and RECREATE: $(gum style --bold "$GCP_INSTANCE_NAME")  (profile: $PROFILE_NAME)" \
+  "  All data on the VM disk will be permanently lost."
+echo
+
+if ! gum confirm "Destroy and recreate $GCP_INSTANCE_NAME?"; then
+  echo "  Aborted."
   exit 0
 fi
 
-echo ""
+section "Terraform"
 terraform_init_profile
 
-# Write profile vars to a temp file and clean up on exit
-TMPVARS=$(mktemp /tmp/devbox-profile-XXXXXX.tfvars)
+TMPVARS="/tmp/devbox-profile-${PROFILE_NAME}.tfvars"
 trap 'rm -f "$TMPVARS"' EXIT
 generate_tfvars "$TMPVARS"
 
-echo "==> Tainting VM resource..."
 cd "$TERRAFORM_DIR"
-terraform taint google_compute_instance.devbox
 
-echo "==> Applying Terraform (this will destroy and recreate the VM)..."
-terraform apply -var-file="$TMPVARS" -auto-approve
+gum spin --spinner dot --title "  Tainting VM resource..." -- \
+  terraform taint google_compute_instance.devbox
+ok "VM resource tainted"
 
-echo ""
-echo "==> Done. VM has been recreated with a fresh disk."
-echo "    Run ./scripts/start.sh --profile $PROFILE_NAME to boot it — bootstrap will run on first SSH login."
+echo
+gum spin --show-output --spinner dot --title "  Applying Terraform (destroying and recreating VM)..." -- \
+  terraform apply -var-file="$TMPVARS" -auto-approve
+
+echo
+gum style --border rounded --padding "1 2" --border-foreground 46 \
+  "$(gum style --foreground 46 --bold "✓  $GCP_INSTANCE_NAME recreated")" \
+  "" \
+  "$(gum style --foreground 240 "Next:  ./scripts/start.sh --profile $PROFILE_NAME")"
+echo

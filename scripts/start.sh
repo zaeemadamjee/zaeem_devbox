@@ -10,6 +10,8 @@ set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/lib/profile.sh"
+source "$SCRIPTS_DIR/lib/ui.sh"
+require_gum
 
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
@@ -20,95 +22,127 @@ SSH_KEY="$HOME/.ssh/zaeem_devbox"
 SSH_USER="zaeem"
 SSH_CONFIG="$HOME/.ssh/config"
 SSH_HOST="devbox-${PROFILE_NAME}"
-SSH_OPTS=(-o StrictHostKeyChecking=no -o ConnectTimeout=30 -i "$SSH_KEY")
 
 # ---------------------------------------------------------------------------
-# Early agent check — warn now so the user can fix before connecting
+# SSH agent check
 # ---------------------------------------------------------------------------
 if ! ssh-add -l &>/dev/null; then
-  echo ""
-  echo "  Warning: SSH agent has no keys loaded."
-  echo "  If this is a fresh VM, the repo clone will fail without agent forwarding."
-  echo "  Fix: ssh-add ~/.ssh/zaeem_devbox"
-  echo ""
+  echo
+  gum style --border rounded --padding "0 2" --border-foreground 214 \
+    "$(gum style --foreground 214 --bold "⚠  SSH agent has no keys loaded")" \
+    "" \
+    "$(gum style --foreground 240 "If this is a fresh VM, the repo clone will fail without agent forwarding.")" \
+    "$(gum style --foreground 240 "Fix: ssh-add ~/.ssh/zaeem_devbox")"
+  echo
 fi
 
-echo "==> Starting $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..."
-gcloud compute instances start "$GCP_INSTANCE_NAME" \
-  --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
+# ---------------------------------------------------------------------------
+# VM: start + wait for SSH + wait for startup script
+# ---------------------------------------------------------------------------
+section "VM ($GCP_INSTANCE_NAME)"
 
-echo "==> Waiting for SSH to be ready..."
-IP=""
-SSH_READY="false"
-for i in $(seq 1 30); do
-  IP=$(gcloud compute instances describe "$GCP_INSTANCE_NAME" \
-    --zone="$GCP_ZONE" --project="$GCP_PROJECT" \
-    --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
-  if [ -n "$IP" ] && ssh "${SSH_OPTS[@]}" -o BatchMode=yes \
-       "${SSH_USER}@${IP}" true 2>/dev/null; then
-    SSH_READY="true"
-    break
-  fi
-  echo "  attempt $i/30..."
-  sleep 5
-done
+gum spin --spinner dot --title "  Starting $GCP_INSTANCE_NAME..." -- \
+  gcloud compute instances start "$GCP_INSTANCE_NAME" \
+    --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
+ok "Instance started"
 
-if [ -z "$IP" ] || [ "$SSH_READY" != "true" ]; then
-  echo "ERROR: Could not reach VM over SSH after 30 attempts" >&2
+# Poll for SSH readiness — runs inside gum spin via exported function so the
+# spinner stays visible during the retry loop.
+_poll_ssh() {
+  local instance="$1" zone="$2" project="$3" user="$4" key="$5" out="$6"
+  for i in $(seq 1 30); do
+    local ip
+    ip=$(gcloud compute instances describe "$instance" \
+      --zone="$zone" --project="$project" \
+      --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
+    if [[ -n "$ip" ]] && ssh \
+         -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+         -i "$key" -o BatchMode=yes "${user}@${ip}" true 2>/dev/null; then
+      echo "$ip" > "$out"
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+export -f _poll_ssh
+
+IP_FILE=$(mktemp)
+trap 'rm -f "$IP_FILE"' EXIT
+
+if ! gum spin --spinner dot --title "  Waiting for SSH (up to 2.5 min)..." -- \
+     bash -c "_poll_ssh '$GCP_INSTANCE_NAME' '$GCP_ZONE' '$GCP_PROJECT' '$SSH_USER' '$SSH_KEY' '$IP_FILE'"; then
+  fail "Could not reach VM over SSH after 30 attempts"
   exit 1
 fi
+IP=$(cat "$IP_FILE")
+ok "VM is up at $IP"
 
-echo "==> VM is up at $IP"
+# Poll for startup script completion
+_poll_startup() {
+  local user="$1" ip="$2" key="$3"
+  for i in $(seq 1 20); do
+    if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+         -i "$key" -o BatchMode=yes "${user}@${ip}" \
+         "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+export -f _poll_startup
 
-# Wait for the GCP startup script to fully complete before connecting.
-# It leaves a marker at /var/lib/startup-complete when done.
-echo "==> Waiting for startup script to complete..."
-for i in $(seq 1 20); do
-  if ssh "${SSH_OPTS[@]}" -o BatchMode=yes "${SSH_USER}@${IP}" \
-       "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
-    echo "    Startup complete."
-    break
-  fi
-  echo "  still initializing... ($i/20)"
-  sleep 5
-done
+if ! gum spin --spinner dot --title "  Waiting for startup script to complete (up to 1.5 min)..." -- \
+     bash -c "_poll_startup '$SSH_USER' '$IP' '$SSH_KEY'"; then
+  warn "Startup script did not complete within expected time — connecting anyway"
+else
+  ok "Startup script complete"
+fi
 
-# Remove stale known_hosts entry — VM gets new host keys after each reset
 ssh-keygen -R "$IP" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Copy profile secrets file to VM if present (gitignored: scripts/profiles/<name>.env)
+# Setup: secrets, terminfo
 # ---------------------------------------------------------------------------
+section "Setup"
+
 LOCAL_SECRETS="$SCRIPTS_DIR/profiles/${PROFILE_NAME}.env"
 if [[ -f "$LOCAL_SECRETS" ]]; then
-  echo "==> Copying secrets (${PROFILE_NAME}.env) to ~/.config/secrets.env..."
-  ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" "mkdir -p ~/.config && chmod 700 ~/.config"
-  scp -o StrictHostKeyChecking=no -i "$SSH_KEY" \
-    "$LOCAL_SECRETS" "${SSH_USER}@${IP}:.config/secrets.env"
-  ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" "chmod 600 ~/.config/secrets.env"
-  echo "    Done."
+  if gum spin --spinner dot --title "  Copying secrets (${PROFILE_NAME}.env)..." -- bash -c "
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i '$SSH_KEY' \
+      '${SSH_USER}@${IP}' 'mkdir -p ~/.config && chmod 700 ~/.config'
+    scp -o StrictHostKeyChecking=no -i '$SSH_KEY' \
+      '$LOCAL_SECRETS' '${SSH_USER}@${IP}:.config/secrets.env'
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i '$SSH_KEY' \
+      '${SSH_USER}@${IP}' 'chmod 600 ~/.config/secrets.env'
+  "; then
+    ok "Secrets copied to ~/.config/secrets.env"
+  else
+    warn "Failed to copy secrets — you can retry by re-running start.sh"
+  fi
 else
-  echo "==> No secrets file at ${LOCAL_SECRETS} — skipping"
+  warn "No secrets file at ${LOCAL_SECRETS} — skipping"
+fi
+
+if gum spin --spinner dot --title "  Installing Ghostty terminfo..." -- bash -c "
+  infocmp -x | ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+    -i '$SSH_KEY' '${SSH_USER}@${IP}' -- tic -x - 2>/dev/null
+"; then
+  ok "Ghostty terminfo installed"
+else
+  warn "Could not install Ghostty terminfo (non-fatal, will retry on next start)"
 fi
 
 # ---------------------------------------------------------------------------
-# Install Ghostty terminfo on the VM so the terminal renders correctly
+# SSH config: add or update devbox-<profile> entry
 # ---------------------------------------------------------------------------
-echo "==> Copying Ghostty terminfo to devbox..."
-if infocmp -x | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" -- tic -x - 2>/dev/null; then
-  echo "    Ghostty terminfo installed."
-else
-  echo "    Warning: could not install Ghostty terminfo (non-fatal, will retry on next start)."
-fi
+section "SSH config"
 
-# ---------------------------------------------------------------------------
-# Patch or create ~/.ssh/config entry for this profile's VM
-# ---------------------------------------------------------------------------
 touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
 
 if grep -q "^Host ${SSH_HOST}$" "$SSH_CONFIG" 2>/dev/null; then
-  # Update existing entry's HostName
   python3 - "$SSH_CONFIG" "$IP" "$SSH_HOST" <<'PYEOF'
 import sys, re
 config_file, new_ip, host = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -122,9 +156,8 @@ content = re.sub(
 with open(config_file, 'w') as f:
     f.write(content)
 PYEOF
-  echo "==> Updated SSH config: $SSH_HOST -> $IP"
+  ok "Updated $SSH_HOST → $IP"
 else
-  # Add new entry
   cat >> "$SSH_CONFIG" <<EOF
 
 Host ${SSH_HOST}
@@ -135,8 +168,10 @@ Host ${SSH_HOST}
   ForwardAgent yes
   ConnectTimeout 30
 EOF
-  echo "==> Added $SSH_HOST to SSH config"
+  ok "Added $SSH_HOST to SSH config"
 fi
 
-echo "==> Connecting to $SSH_HOST..."
-ssh "$SSH_HOST"
+echo
+gum style --bold --foreground 99 "  Connecting to $SSH_HOST..."
+echo
+ssh -A "$SSH_HOST"

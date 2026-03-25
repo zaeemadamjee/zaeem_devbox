@@ -10,13 +10,16 @@ set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPTS_DIR/lib/profile.sh"
+source "$SCRIPTS_DIR/lib/ui.sh"
+require_gum
 
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
 check_gcp_project
 resolve_instance_zone
 
-echo "==> Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..."
-gcloud compute instances stop "$GCP_INSTANCE_NAME" \
-  --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
-echo "==> Done. VM is stopped (disk persists, no compute charges until next start)."
+gum spin --spinner dot --title "  Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..." -- \
+  gcloud compute instances stop "$GCP_INSTANCE_NAME" \
+    --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
+
+ok "$GCP_INSTANCE_NAME stopped  $(gum style --faint "(disk persists, no compute charges until next start)")"
