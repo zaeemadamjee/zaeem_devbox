@@ -185,50 +185,39 @@ idle_timer_enabled_bool() {
 }
 
 # ---------------------------------------------------------------------------
-# devbox
+# Homebrew
 # ---------------------------------------------------------------------------
-section "devbox"
-step "devbox binary" \
-  "command -v devbox" \
-  "curl -fsSL https://releases.jetify.com/devbox -o /tmp/devbox && sudo install -m 755 /tmp/devbox /usr/local/bin/devbox && rm /tmp/devbox"
+section "Homebrew"
 
-# Pre-install Nix non-interactively before devbox global pull.
-#
-# The nix-installer reads its "Press enter to continue" confirmation prompt from
-# /dev/tty directly, bypassing gum spin's stdin management — so env var overrides
-# like NIX_INSTALLER_NO_CONFIRM have no effect and the prompt leaks through.
-#
-# Using --no-confirm on the installer CLI is the only reliable way to suppress it.
-# When devbox global pull runs and finds Nix already installed, it skips its own
-# installer entirely — no prompts, no "To get started using Nix" spam.
-step --stream "Nix package manager" \
-  "command -v nix" \
-  "curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm"
+BREW_PREFIX="/home/linuxbrew/.linuxbrew"
 
-# Source Nix into the current shell — the step above ran in a subshell so PATH
-# was not updated in this process.
+# Install Homebrew non-interactively. On Linux this also installs its system
+# dependencies (build-essential, procps, etc.) via apt automatically.
+step --stream "Homebrew" \
+  "command -v brew" \
+  'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+
+# Source Homebrew into the current shell — the step above ran in a subshell so
+# PATH was not updated in this process.
 # shellcheck source=/dev/null
-[[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]] && \
-  source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+[[ -f "${BREW_PREFIX}/bin/brew" ]] && eval "$("${BREW_PREFIX}/bin/brew" shellenv)"
 
 if ! $CHECK_ONLY; then
   local_t0=$(_t0)
-  # Run devbox directly — no gum spin wrapper — so Nix gets the real terminal
-  # and its native progress bars/cursor-rewriting render correctly.
-  # A static pending line is printed first so the user knows what's starting.
-  printf "  \033[2m○\033[0m  devbox global packages \033[2m(first run installs Nix — may take a few minutes)\033[0m\n\n"
-  if devbox global pull "$REPO_ROOT/devbox/devbox.json"; then
+  # Run brew bundle directly — no gum spin wrapper — so Homebrew's native
+  # progress output renders correctly. First run may take several minutes.
+  printf "  \033[2m○\033[0m  brew bundle \033[2m(first run may take several minutes)\033[0m\n\n"
+  if brew bundle install --file="$REPO_ROOT/brew/Brewfile"; then
     echo
-    ok "devbox global packages  $(gum style --faint "$(_elapsed "$local_t0")")"
+    ok "brew bundle  $(gum style --faint "$(_elapsed "$local_t0")")"
   else
     echo
-    fail "devbox global packages  $(gum style --faint "$(_elapsed "$local_t0")")"
+    fail "brew bundle  $(gum style --faint "$(_elapsed "$local_t0")")"
     exit 1
   fi
-  eval "$(devbox global shellenv)"
 else
-  step "devbox global packages synced" \
-    "devbox global list 2>/dev/null | grep -q ." \
+  step "Homebrew packages synced" \
+    "brew bundle check --file=\"$REPO_ROOT/brew/Brewfile\" &>/dev/null" \
     ""
 fi
 
@@ -282,12 +271,14 @@ symlink_step "~/.config/opencode/opencode.json"  "$DOTFILES_DIR/opencode/opencod
 # Observability (otelcol-contrib)
 # ---------------------------------------------------------------------------
 section "Observability"
-OTELCOL_SRC="$(devbox global path 2>/dev/null)/.devbox/nix/profile/default/bin/otelcol-contrib"
+# Resolve the Homebrew-installed binary and symlink it to a stable system path
+# so the systemd service (which runs outside the user's shell/PATH) can find it.
+OTELCOL_SRC="$(command -v otelcol-contrib 2>/dev/null || true)"
 export OTELCOL_SRC
 
 step "otelcol-contrib binary" \
-  "command -v otelcol-contrib" \
-  "[[ -f \"\$OTELCOL_SRC\" ]] && sudo ln -sf \"\$OTELCOL_SRC\" /usr/local/bin/otelcol-contrib || echo '  ⚠  otelcol-contrib not found in devbox — is it in devbox.json?'"
+  "test -x /usr/local/bin/otelcol-contrib" \
+  "[[ -n \"\$OTELCOL_SRC\" ]] && sudo ln -sf \"\$OTELCOL_SRC\" /usr/local/bin/otelcol-contrib || echo '  ⚠  otelcol-contrib not found in PATH — is it in brew/Brewfile?'"
 
 step "otelcol-contrib systemd service" \
   "systemctl is-enabled otelcol-contrib &>/dev/null" \
@@ -314,6 +305,54 @@ else
     skip "idle timer (disabled in profile)"
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# Docker
+# ---------------------------------------------------------------------------
+section "Docker"
+
+# Install Docker Engine via the official installer — this handles containerd,
+# dockerd, socket/service unit files, and full systemd integration on Ubuntu.
+step --stream "Docker Engine" \
+  "systemctl is-enabled docker &>/dev/null" \
+  "curl -fsSL https://get.docker.com | sh"
+
+step "docker group membership" \
+  "id -nG | grep -qw docker" \
+  "sudo usermod -aG docker \"\$USER\""
+
+# ---------------------------------------------------------------------------
+# Supabase CLI
+# ---------------------------------------------------------------------------
+section "Supabase CLI"
+
+# Install from the official .deb release on GitHub — installs to /usr/bin/supabase.
+step --stream "supabase CLI" \
+  "command -v supabase" \
+  'LATEST=$(curl -fsSL https://api.github.com/repos/supabase/cli/releases/latest \
+     | grep "\"tag_name\"" | head -1 | sed '"'"'s/.*"tag_name": "\(.*\)".*/\1/'"'"') \
+   && curl -fsSLo /tmp/supabase.deb \
+       "https://github.com/supabase/cli/releases/download/${LATEST}/supabase_${LATEST#v}_linux_amd64.deb" \
+   && sudo dpkg -i /tmp/supabase.deb \
+   && rm /tmp/supabase.deb'
+
+# ---------------------------------------------------------------------------
+# Node.js (via nvm)
+# ---------------------------------------------------------------------------
+section "Node.js"
+
+step "nvm" \
+  "test -s \"\$HOME/.nvm/nvm.sh\"" \
+  "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/HEAD/install.sh | bash"
+
+# Source nvm into the current shell so subsequent steps can use it.
+# shellcheck source=/dev/null
+export NVM_DIR="$HOME/.nvm"
+[[ -s "$NVM_DIR/nvm.sh" ]] && source "$NVM_DIR/nvm.sh"
+
+step "Node.js 22" \
+  "node --version 2>/dev/null | grep -q '^v22'" \
+  "nvm install 22 && nvm alias default 22"
 
 # ---------------------------------------------------------------------------
 # CLI tools

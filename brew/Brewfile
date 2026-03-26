@@ -1,0 +1,77 @@
+# Brewfile — hermetic CLI tool dependencies via Homebrew.
+#
+# Install:  brew bundle install --file=brew/Brewfile
+# Check:    brew bundle check   --file=brew/Brewfile
+# Update:   brew upgrade && brew bundle install --file=brew/Brewfile
+
+# ---------------------------------------------------------------------------
+# Version control
+# ---------------------------------------------------------------------------
+brew "git"
+brew "gh"
+brew "lazygit"
+brew "tig"
+brew "git-delta"       # better diffs
+
+# ---------------------------------------------------------------------------
+# Shell & multiplexer
+# ---------------------------------------------------------------------------
+brew "tmux"
+
+# ---------------------------------------------------------------------------
+# Languages
+# ---------------------------------------------------------------------------
+brew "python@3.12"
+brew "go"
+brew "rustup"          # manages Rust toolchain; run `rustup default stable` once
+
+# ---------------------------------------------------------------------------
+# Core CLI utilities
+# ---------------------------------------------------------------------------
+brew "ripgrep"
+brew "fzf"
+brew "fd"
+brew "jq"
+brew "curl"
+brew "wget"
+brew "tree"
+brew "unzip"
+brew "make"
+brew "gcc"
+brew "vim"
+brew "neovim"
+
+# ---------------------------------------------------------------------------
+# Modern CLI replacements
+# ---------------------------------------------------------------------------
+brew "bat"             # cat
+brew "eza"             # ls
+brew "dust"            # du
+brew "procs"           # ps
+brew "btop"            # top / htop
+
+# ---------------------------------------------------------------------------
+# Navigation & file management
+# ---------------------------------------------------------------------------
+brew "zoxide"          # smart cd
+brew "broot"
+brew "yazi"            # terminal file manager
+
+# ---------------------------------------------------------------------------
+# Dev utilities
+# ---------------------------------------------------------------------------
+brew "fx"              # JSON explorer
+brew "glow"            # Markdown viewer
+brew "zellij"          # terminal workspace
+brew "tealdeer"        # tldr pages
+
+# ---------------------------------------------------------------------------
+# Prompt
+# ---------------------------------------------------------------------------
+brew "starship"
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+tap "open-telemetry/opentelemetry"
+brew "opentelemetry-collector-contrib"
