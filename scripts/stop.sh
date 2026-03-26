@@ -16,7 +16,7 @@ load_profile "$PROFILE"
 check_gcp_project
 resolve_instance_zone
 
-gum spin --spinner dot --title " Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..." -- \
+gum spin --spinner dot --title "Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..." -- \
   gcloud compute instances stop "$GCP_INSTANCE_NAME" \
     --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
 

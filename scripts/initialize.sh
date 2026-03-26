@@ -51,7 +51,7 @@ for api in compute.googleapis.com storage.googleapis.com; do
        --filter="name:${api}" --format="value(name)" 2>/dev/null | grep -q "$api"; then
     skip "$api (already enabled)"
   else
-    gum spin --spinner dot --title " Enabling ${api}..." -- \
+    gum spin --spinner dot --title "Enabling ${api}..." -- \
       gcloud services enable "$api" --project="$GCP_PROJECT"
     ok "$api enabled"
   fi
@@ -65,7 +65,7 @@ section "Step 2/4 — SSH key"
 if [[ -f "$SSH_KEY_PATH" ]]; then
   skip "SSH key already exists at $SSH_KEY_PATH"
 else
-  gum spin --spinner dot --title " Generating ed25519 SSH key..." -- \
+  gum spin --spinner dot --title "Generating ed25519 SSH key..." -- \
     ssh-keygen -t ed25519 -C "zaeem-devbox" -f "$SSH_KEY_PATH" -N ""
   ok "SSH key generated at $SSH_KEY_PATH"
 fi
@@ -104,7 +104,7 @@ BUCKET_URI="gs://${BUCKET_NAME}"
 if gcloud storage buckets describe "$BUCKET_URI" --project="$GCP_PROJECT" &>/dev/null; then
   skip "Bucket $BUCKET_URI already exists"
 else
-  gum spin --spinner dot --title " Creating bucket $BUCKET_URI..." -- bash -c "
+  gum spin --spinner dot --title "Creating bucket $BUCKET_URI..." -- bash -c "
     gcloud storage buckets create '$BUCKET_URI' \
       --project='$GCP_PROJECT' \
       --location='US' \
@@ -129,7 +129,7 @@ cd "$TERRAFORM_DIR"
 SA_EMAIL="otelcol-exporter@${GCP_PROJECT}.iam.gserviceaccount.com"
 if gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" &>/dev/null; then
   if ! terraform state show google_service_account.otelcol &>/dev/null; then
-    gum spin --spinner dot --title " Importing existing service account..." -- \
+    gum spin --spinner dot --title "Importing existing service account..." -- \
       terraform import -var-file="$TMPVARS" \
         google_service_account.otelcol \
         "projects/${GCP_PROJECT}/serviceAccounts/${SA_EMAIL}"
@@ -141,7 +141,7 @@ fi
 
 if gcloud compute firewall-rules describe "devbox-allow-ssh" --project="$GCP_PROJECT" &>/dev/null 2>&1; then
   if ! terraform state show google_compute_firewall.allow_ssh &>/dev/null; then
-    gum spin --spinner dot --title " Importing existing firewall rule..." -- \
+    gum spin --spinner dot --title "Importing existing firewall rule..." -- \
       terraform import -var-file="$TMPVARS" \
         google_compute_firewall.allow_ssh \
         "projects/${GCP_PROJECT}/global/firewalls/devbox-allow-ssh"
@@ -154,7 +154,7 @@ fi
 if gcloud compute instances describe "$GCP_INSTANCE_NAME" \
      --zone="$GCP_ZONE" --project="$GCP_PROJECT" &>/dev/null 2>&1; then
   if ! terraform state show google_compute_instance.devbox &>/dev/null; then
-    gum spin --spinner dot --title " Importing existing VM instance..." -- \
+    gum spin --spinner dot --title "Importing existing VM instance..." -- \
       terraform import -var-file="$TMPVARS" \
         google_compute_instance.devbox \
         "${GCP_PROJECT}/${GCP_ZONE}/${GCP_INSTANCE_NAME}"

@@ -73,7 +73,7 @@ timed_spin() {
   local title="$1"; shift
   local t0; t0=$(_t0)
   # shellcheck disable=SC2086
-  gum spin $show_output --spinner dot --title " ${title}..." -- "$@"
+  gum spin $show_output --spinner dot --title "${title}..." -- "$@"
   ok "${title}  $(gum style --faint "$(_elapsed "$t0")")"
 }
 
@@ -102,7 +102,7 @@ step() {
     if $stream; then
       local _log
       _log="$(mktemp /tmp/bootstrap-XXXXXX.log)"
-      if gum spin --spinner dot --title " ${label}..." -- \
+      if gum spin --spinner dot --title "${label}..." -- \
            bash -c "{ $install; } >'$_log' 2>&1"; then
         ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
         rm -f "$_log"
@@ -118,7 +118,7 @@ step() {
         return 1
       fi
     else
-      gum spin --spinner dot --title " ${label}..." -- bash -c "$install"
+      gum spin --spinner dot --title "${label}..." -- bash -c "$install"
       ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
     fi
   fi
@@ -306,7 +306,7 @@ else
     if $CHECK_ONLY; then
       warn "devbox-idle timer is running but IDLE_TIMER_ENABLED=false in profile"
     else
-      gum spin --spinner dot --title " Removing idle timer (disabled in profile)..." -- \
+      gum spin --spinner dot --title "Removing idle timer (disabled in profile)..." -- \
         bash -c "sudo systemctl stop devbox-idle.timer 2>/dev/null; sudo systemctl disable devbox-idle.timer 2>/dev/null; sudo rm -f /etc/systemd/system/devbox-idle.timer /etc/systemd/system/devbox-idle.service /usr/local/bin/idle-check.sh; sudo systemctl daemon-reload; sudo systemctl reset-failed 2>/dev/null || true"
       ok "idle timer removed"
     fi
@@ -319,7 +319,7 @@ fi
 # CLI tools
 # ---------------------------------------------------------------------------
 section "CLI tools"
-live_step "Claude Code" "(may take a minute)" \
+live_step "claude code" "(may take a minute)" \
   "command -v claude" \
   "curl -fsSL https://claude.ai/install.sh | bash"
 
