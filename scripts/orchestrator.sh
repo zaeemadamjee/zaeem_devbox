@@ -97,7 +97,7 @@ _fetch_vm_statuses() {
 }
 export -f _fetch_vm_statuses
 
-gum spin --spinner dot --title "  Checking VMs..." -- \
+gum spin --spinner dot --title " Checking VMs..." -- \
   bash -c "_fetch_vm_statuses '$_tmpdir' '$SCRIPTS_DIR'"
 
 # --- Render status table ---

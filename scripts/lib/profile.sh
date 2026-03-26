@@ -133,7 +133,7 @@ resolve_instance_zone() {
 # ---------------------------------------------------------------------------
 terraform_init_profile() {
   local bucket="${GCP_PROJECT}-zaeem-devbox-tf-state"
-  gum spin --spinner dot --title "  Initializing Terraform (profile: $PROFILE_NAME)..." -- \
+  gum spin --spinner dot --title " Initializing Terraform (profile: $PROFILE_NAME)..." -- \
     bash -c "cd '$TERRAFORM_DIR' && terraform init -reconfigure \
       -backend-config='bucket=${bucket}' \
       -backend-config='prefix=${PROFILE_NAME}' \

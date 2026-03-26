@@ -39,7 +39,7 @@ fi
 # ---------------------------------------------------------------------------
 section "VM ($GCP_INSTANCE_NAME)"
 
-gum spin --spinner dot --title "  Starting $GCP_INSTANCE_NAME..." -- \
+gum spin --spinner dot --title " Starting $GCP_INSTANCE_NAME..." -- \
   gcloud compute instances start "$GCP_INSTANCE_NAME" \
     --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
 ok "Instance started"
@@ -68,7 +68,7 @@ export -f _poll_ssh
 IP_FILE=$(mktemp)
 trap 'rm -f "$IP_FILE"' EXIT
 
-if ! gum spin --spinner dot --title "  Waiting for SSH (up to 2.5 min)..." -- \
+if ! gum spin --spinner dot --title " Waiting for SSH (up to 2.5 min)..." -- \
      bash -c "_poll_ssh '$GCP_INSTANCE_NAME' '$GCP_ZONE' '$GCP_PROJECT' '$SSH_USER' '$SSH_KEY' '$IP_FILE'"; then
   fail "Could not reach VM over SSH after 30 attempts"
   exit 1
@@ -91,7 +91,7 @@ _poll_startup() {
 }
 export -f _poll_startup
 
-if ! gum spin --spinner dot --title "  Waiting for startup script to complete (up to 2.5 min)..." -- \
+if ! gum spin --spinner dot --title " Waiting for startup script to complete (up to 2.5 min)..." -- \
      bash -c "_poll_startup '$SSH_USER' '$IP' '$SSH_KEY'"; then
   warn "Startup script did not complete within expected time — connecting anyway"
 else
@@ -107,7 +107,7 @@ section "Setup"
 
 LOCAL_SECRETS="$SCRIPTS_DIR/profiles/${PROFILE_NAME}.env"
 if [[ -f "$LOCAL_SECRETS" ]]; then
-  if gum spin --spinner dot --title "  Copying secrets (${PROFILE_NAME}.env)..." -- bash -c "
+  if gum spin --spinner dot --title " Copying secrets (${PROFILE_NAME}.env)..." -- bash -c "
     ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i '$SSH_KEY' \
       '${SSH_USER}@${IP}' 'mkdir -p ~/.config && chmod 700 ~/.config'
     scp -o StrictHostKeyChecking=no -i '$SSH_KEY' \
@@ -123,7 +123,7 @@ else
   warn "No secrets file at ${LOCAL_SECRETS} — skipping"
 fi
 
-if gum spin --spinner dot --title "  Installing Ghostty terminfo..." -- bash -c "
+if gum spin --spinner dot --title " Installing Ghostty terminfo..." -- bash -c "
   infocmp -x | ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
     -i '$SSH_KEY' '${SSH_USER}@${IP}' -- tic -x - 2>/dev/null
 "; then

@@ -35,7 +35,7 @@ setup_tfvars
 
 cd "$TERRAFORM_DIR"
 
-gum spin --spinner dot --title "  Tainting VM resource..." -- \
+gum spin --spinner dot --title " Tainting VM resource..." -- \
   terraform taint google_compute_instance.devbox
 ok "VM resource tainted"
 
