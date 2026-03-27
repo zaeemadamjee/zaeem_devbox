@@ -339,7 +339,7 @@ step --stream "Docker Engine" \
   "curl -fsSL https://get.docker.com | sh"
 
 step "docker group membership" \
-  "id -nG | grep -qw docker" \
+  "getent group docker | grep -qw \"\$USER\"" \
   "sudo usermod -aG docker \"\$USER\""
 
 # ---------------------------------------------------------------------------
@@ -366,9 +366,9 @@ section "Node.js"
 export NVM_DIR="$HOME/.nvm"
 [[ -s "${BREW_PREFIX}/opt/nvm/nvm.sh" ]] && source "${BREW_PREFIX}/opt/nvm/nvm.sh"
 
-step "Node.js 22" \
-  "node --version 2>/dev/null | grep -q '^v22'" \
-  "nvm install 22 && nvm alias default 22"
+step "Node.js (stable)" \
+  "node --version &>/dev/null" \
+  "export NVM_DIR=\"\$HOME/.nvm\" && source '${BREW_PREFIX}/opt/nvm/nvm.sh' && nvm install stable && nvm alias default stable"
 
 # ---------------------------------------------------------------------------
 # CLI tools
