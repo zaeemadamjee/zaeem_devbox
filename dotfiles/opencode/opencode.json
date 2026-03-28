@@ -1,6 +1,12 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@devtheops/opencode-plugin-otel"],
+  "plugin": ["@devtheops/opencode-plugin-otel", "opencode-scheduler"],
+  "mcp": {
+    "notion": {
+      "type": "remote",
+      "url": "https://mcp.notion.com/mcp"
+    }
+  },
   "permission": {
     "*": "allow",
     "doom_loop": "allow",

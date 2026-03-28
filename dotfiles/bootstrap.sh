@@ -371,9 +371,9 @@ step "Node.js (stable)" \
   "export NVM_DIR=\"\$HOME/.nvm\" && source '${BREW_PREFIX}/opt/nvm/nvm.sh' && nvm install stable && nvm alias default stable"
 
 # ---------------------------------------------------------------------------
-# CLI tools
+# Coding tools
 # ---------------------------------------------------------------------------
-section "CLI tools"
+section "Coding tools"
 live_step "claude code" "(may take a minute)" \
   "command -v claude" \
   "curl -fsSL https://claude.ai/install.sh | bash"
