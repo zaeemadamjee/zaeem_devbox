@@ -436,7 +436,7 @@ fi
 if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
   step "Tailscale authenticated" \
     "tailscale status --peers=false &>/dev/null" \
-    "sudo tailscale up --authkey \"\$TAILSCALE_AUTH_KEY\""
+    "sudo tailscale up --authkey \"\$TAILSCALE_AUTH_KEY\" --ssh"
 else
   if $CHECK_ONLY; then
     warn "Tailscale: TAILSCALE_AUTH_KEY not set — skipping auth"
