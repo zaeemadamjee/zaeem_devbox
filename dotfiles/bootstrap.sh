@@ -420,6 +420,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Tailscale
+# ---------------------------------------------------------------------------
+section "Tailscale"
+
+step --stream "Tailscale" \
+  "command -v tailscale" \
+  "curl -fsSL https://tailscale.com/install.sh | sh"
+
+# Read the auth key from secrets.env if not already in the environment.
+if [[ -z "${TAILSCALE_AUTH_KEY:-}" ]] && [[ -s "$HOME/.config/secrets.env" ]]; then
+  TAILSCALE_AUTH_KEY=$(grep -m1 '^TAILSCALE_AUTH_KEY=' "$HOME/.config/secrets.env" | cut -d= -f2-)
+fi
+
+if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
+  step "Tailscale authenticated" \
+    "tailscale status --peers=false &>/dev/null" \
+    "sudo tailscale up --authkey \"\$TAILSCALE_AUTH_KEY\""
+else
+  if $CHECK_ONLY; then
+    warn "Tailscale: TAILSCALE_AUTH_KEY not set — skipping auth"
+  else
+    warn "TAILSCALE_AUTH_KEY not set in secrets.env — Tailscale installed but not authenticated"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Secrets
 # ---------------------------------------------------------------------------
 section "Secrets"
