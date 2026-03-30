@@ -28,7 +28,6 @@ SSH_PUBLIC_KEYS=(
 # --- Firewall: extra TCP ports to open (beyond SSH/22) ---
 # Examples: "3000" (dev server), "8080" (proxy), "5432" (postgres)
 FIREWALL_ALLOW_PORTS=(
-  "3000"
 )
 
 # --- Repos to clone into ~/workspace on first login ---

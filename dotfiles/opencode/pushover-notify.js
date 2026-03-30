@@ -14,14 +14,21 @@ const pending = new Map()
 let webUrlPromise = null
 
 /**
- * Resolve the opencode web UI base URL using Tailscale MagicDNS.
- * Runs `tailscale status --json` once and caches the result.
- * Fallback chain: tailscale Self.DNSName → TAILSCALE_HOSTNAME env var → localhost
+ * Resolve the opencode web UI URL using Tailscale MagicDNS, swapping in the
+ * Tailscale hostname while preserving the port from the live serverUrl.
+ *
+ * serverUrl is provided by the opencode plugin SDK and contains the actual
+ * port that this instance bound to (random when no port is pinned in config).
+ *
+ * Fallback chain: tailscale Self.DNSName → TAILSCALE_HOSTNAME env var → serverUrl as-is
  */
-function resolveWebUrl() {
+function resolveWebUrl(serverUrl) {
   if (webUrlPromise) return webUrlPromise
 
-  const port = process.env.OPENCODE_SERVER_PORT ?? "4096"
+  let port = "4096"
+  try {
+    port = new URL(serverUrl).port || "4096"
+  } catch {}
 
   webUrlPromise = execAsync("tailscale status --json")
     .then(({ stdout }) => {
@@ -35,7 +42,7 @@ function resolveWebUrl() {
     .catch(() => {
       const envHost = process.env.TAILSCALE_HOSTNAME
       if (envHost) return `http://${envHost}:${port}`
-      return `http://localhost:${port}`
+      return serverUrl ?? `http://localhost:${port}`
     })
 
   return webUrlPromise
@@ -165,7 +172,7 @@ async function buildNotification(client, directory, sessionID, eventType, fallba
     message += ` (${m}m ${s}s)`
   }
 
-  const url = await resolveWebUrl()
+  const url = await resolveWebUrl(null)
 
   return { title, message, resolvedType, url }
 }
@@ -184,10 +191,10 @@ export const PushoverNotifyPlugin = async (input) => {
     console.log("[opencode-notify] Plugin loaded")
   }
 
-  const { client, directory } = input
+  const { client, directory, serverUrl } = input
 
   // Kick off Tailscale hostname resolution eagerly so it's ready by first notification
-  resolveWebUrl()
+  resolveWebUrl(serverUrl)
 
   // Flush any debounced notifications when the process is about to exit
   let flushed = false

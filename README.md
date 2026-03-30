@@ -2,7 +2,7 @@
 
 A fully reproducible GCP cloud dev box, provisioned from scratch with Terraform and configured via devbox + dotfiles. The goal is a single SSH command away from a complete dev environment — on any machine, after any reprovisioning. Nothing requires manual one-off steps: all infrastructure is declared in Terraform, all tools are pinned in `devbox/devbox.json`, and all shell config is committed in `dotfiles/`.
 
-**Workflow:** create a profile, run Terraform to create the VM, run `start.sh` to connect — the welcome screen walks you through bootstrap on first login.
+**Workflow:** create a profile, then run `orchestrator.sh` — an interactive TUI menu that shows live VM status across all profiles and lets you pick start / stop / reset / initialize. The welcome screen walks you through bootstrap on first login.
 
 ---
 
@@ -15,7 +15,12 @@ Terraform startup-script (runs once on provision)
   → writes profile name to ~/.config/devbox/profile
   → writes pre-bootstrap ~/.zshrc stub
 
-start.sh (run locally to connect)
+orchestrator.sh (run locally — interactive TUI)
+  → shows GCP auth status + live VM state for all profiles
+  → profile + action selection menu (start / stop / reset / initialize)
+  → delegates to the appropriate subscript
+
+start.sh (called by orchestrator or directly)
   → starts VM, waits for SSH + startup-script to finish
   → copies scripts/profiles/<name>.env secrets to ~/.config/secrets.env
   → installs Ghostty terminfo
@@ -53,6 +58,8 @@ To add a new VM, copy an existing profile and update it:
 cp scripts/profiles/personal.sh scripts/profiles/myproject.sh
 # edit scripts/profiles/myproject.sh
 ```
+
+Then run `scripts/orchestrator.sh` and select `initialize` to provision it.
 
 ---
 
@@ -105,7 +112,46 @@ export SOME_OTHER_SECRET=...
 
 - Hardcoded name/email — update with your actual identity before provisioning
 
-### 7. GCP Billing Alerts (optional but recommended)
+### 7. Tailscale (recommended)
+
+Tailscale gives the VM a stable MagicDNS hostname (e.g. `devbox.tail1234abcd.ts.net`) that survives reprovisioning and ephemeral IP changes. It is also used by the opencode notification plugin to generate a direct link to the web UI.
+
+1. Create a free account at [tailscale.com](https://tailscale.com)
+2. Go to **Settings → Keys** and generate an **Auth key** (reusable, or one-time for a single VM)
+3. Add the key to your profile's secrets file:
+   ```bash
+   # scripts/profiles/<name>.env
+   TAILSCALE_AUTH_KEY=tskey-auth-...
+   ```
+4. `start.sh` copies the secret to the VM; bootstrap installs Tailscale and runs `tailscale up --authkey` automatically
+5. After bootstrap, find the MagicDNS hostname in the [Tailscale admin console](https://login.tailscale.com/admin/machines) — it will look like `<instance-name>.<tailnet>.ts.net`
+
+### 8. Pushover notifications (optional)
+
+The `pushover-notify.js` opencode plugin fires a push notification to your phone whenever the agent becomes idle, hits an error, needs a permission grant, or asks a clarifying question. Notifications include the project name, elapsed time, last assistant message, and a direct link to the opencode web UI via Tailscale.
+
+**Get credentials:**
+
+1. Create an account at [pushover.net](https://pushover.net) — your **User Key** is shown on the dashboard
+2. Go to **Your Applications → Create an Application** to get an **App Token**
+3. Install the Pushover app on iOS or Android and log in
+
+**Add to your secrets file:**
+
+```bash
+# scripts/profiles/<name>.env
+PUSHOVER_APP_TOKEN=a1e11v...
+PUSHOVER_USER_KEY=uzb29w...
+```
+
+**Customisation:**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `OPENCODE_NOTIFY=0` | (unset) | Disable all notifications without removing the plugin |
+| `TAILSCALE_HOSTNAME` | (auto-detected) | Override the hostname if `tailscale status` is unavailable |
+
+### 9. GCP Billing Alerts (optional but recommended)
 
 - Manual setup in GCP Console — the repo uses `$30 alert / $50 hard cap` — see `docs/billing-setup.md`
 
@@ -125,42 +171,42 @@ cp scripts/profiles/personal.sh scripts/profiles/<name>.sh
 # edit scripts/profiles/<name>.sh — set GCP_PROJECT, instance name, repos, etc.
 
 # 3. (Optional) Create a secrets file for the profile
-echo 'export ANTHROPIC_API_KEY=sk-ant-...' > scripts/profiles/<name>.env
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > scripts/profiles/<name>.env
 
-# 4. Run initialize — handles APIs, SSH key, state bucket, and terraform apply in one go
-scripts/initialize.sh --profile <name>
-# (if your SSH key isn't in the profile yet, the script will print it and pause)
+# 4. Run the orchestrator, select your profile, then select "initialize"
+#    (handles APIs, SSH key, state bucket, and terraform apply in one go)
+scripts/orchestrator.sh
 
-# 5. Start and connect — bootstrap runs interactively on first login
-scripts/start.sh --profile <name>
+# 5. After initialize completes, run the orchestrator again and select "start"
+#    Bootstrap runs interactively on first login
+scripts/orchestrator.sh
 ```
 
-> **Note:** `initialize.sh` is for first-time provisioning only. For subsequent wipe-and-recreate, use `reset.sh` instead.
+> **Note:** `initialize` is for first-time provisioning only. For subsequent wipe-and-recreate, use `reset` in the orchestrator instead.
 
 ### Reprovisioning (wipe and recreate an existing VM)
 
-```bash
-# Destroys and recreates the VM — all disk data is lost
-scripts/reset.sh --profile <name>
-scripts/start.sh --profile <name>
-```
+Run `scripts/orchestrator.sh`, select the profile, then select `reset`. Once complete, select `start` to reconnect.
 
 ---
 
 ## Daily Usage
 
 ```bash
-# Start VM and SSH in
-scripts/start.sh --profile personal
-
-# Stop VM immediately (disk persists, no compute charges)
-scripts/stop.sh --profile personal
-
-# Wipe and recreate VM with a fresh disk
-scripts/reset.sh --profile personal
+# Open the interactive orchestrator — pick a profile and action
+scripts/orchestrator.sh
 ```
 
-The SSH config entry is named `devbox-<profile>` (e.g. `devbox-personal`), so you can also connect directly after `start.sh` has run once:
+The orchestrator presents a live status table of all profiles then lets you select:
+
+| Action | Effect |
+|---|---|
+| `start` | Start the VM, copy secrets, and SSH in |
+| `stop` | Stop the VM (disk persists, no compute charges) |
+| `reset` | Wipe and recreate the VM from scratch ⚠ destructive |
+| `initialize` | First-time provision (APIs, SSH key, state bucket, Terraform) |
+
+The SSH config entry is named `devbox-<profile>` (e.g. `devbox-personal`), so you can also SSH directly after `start` has run once:
 
 ```bash
 ssh devbox-personal
@@ -178,8 +224,15 @@ Each local machine runs `scripts/start.sh --profile <name>` independently — it
 
 ## Aliases (optional)
 
+Alias the orchestrator to `devbox` for quick access from anywhere:
+
 ```bash
-echo 'alias devbox="~/Documents/git/zaeem_devbox/scripts/start.sh --profile personal"' >> ~/.zshrc
-echo 'alias devbox-stop="~/Documents/git/zaeem_devbox/scripts/stop.sh --profile personal"' >> ~/.zshrc
+echo 'alias devbox="~/Documents/git/zaeem_devbox/scripts/orchestrator.sh"' >> ~/.zshrc
 source ~/.zshrc
+```
+
+Then just run:
+
+```bash
+devbox
 ```
