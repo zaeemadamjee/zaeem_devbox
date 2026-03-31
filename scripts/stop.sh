@@ -14,6 +14,7 @@ source "$SCRIPTS_DIR/lib/profile.sh"
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
 check_gcp_project
+check_gcloud_auth
 resolve_instance_zone
 
 gum spin --spinner dot --title "Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..." -- \

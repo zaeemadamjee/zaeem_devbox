@@ -14,6 +14,7 @@ source "$SCRIPTS_DIR/lib/profile.sh"
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
 check_gcp_project
+check_gcloud_auth
 
 echo
 gum style --border rounded --padding "1 2" --border-foreground 202 \

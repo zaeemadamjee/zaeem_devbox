@@ -20,6 +20,7 @@ source "$SCRIPTS_DIR/lib/profile.sh"
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
 check_gcp_project
+check_gcloud_auth
 
 SSH_KEY_PATH="$HOME/.ssh/zaeem_devbox"
 

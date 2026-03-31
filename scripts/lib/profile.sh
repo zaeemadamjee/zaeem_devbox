@@ -81,6 +81,31 @@ load_profile() {
 }
 
 # ---------------------------------------------------------------------------
+# check_gcloud_auth
+#   Verifies that gcloud credentials are valid by requesting an access token.
+#   If credentials are expired or missing, triggers interactive re-auth inline
+#   so subsequent API calls (instances list, etc.) don't fail silently.
+#   Call after check_gcp_project and before any authenticated gcloud API call.
+# ---------------------------------------------------------------------------
+check_gcloud_auth() {
+  # Suppress only stdout (the raw token) — stderr stays open so password
+  # prompts and reauth flows from gcloud are visible and interactive.
+  if gcloud auth print-access-token >/dev/null; then
+    return 0
+  fi
+
+  # Credentials are fully expired or missing — fall back to browser auth.
+  echo
+  gum style --border rounded --padding "0 2" --border-foreground 214 \
+    "$(gum style --foreground 214 --bold "⚠  gcloud credentials expired or missing")" \
+    "" \
+    "$(gum style --foreground 240 "A browser window will open to re-authenticate.")" \
+    "$(gum style --foreground 240 "Complete sign-in, then this script will continue.")"
+  echo
+  gcloud auth login
+}
+
+# ---------------------------------------------------------------------------
 # check_gcp_project
 #   Validates that the active gcloud project matches the profile's GCP_PROJECT.
 #   Call after load_profile.
@@ -94,7 +119,7 @@ check_gcp_project() {
     gum style --border rounded --padding "1 2" --border-foreground 196 \
       "$(gum style --foreground 196 --bold "✗  GCP project mismatch")" \
       "" \
-      "  Profile $(gum style --bold "'${PROFILE_NAME}'")" \
+      "  Profile $(gum style --bold "'${PROFILE_NAME:-unknown}'")" \
       "  Expected:  $(gum style --foreground 46  "$GCP_PROJECT")" \
       "  Active:    $(gum style --foreground 196 "$active_project")" \
       "" \
@@ -117,11 +142,11 @@ resolve_instance_zone() {
   GCP_ZONE=$(gcloud compute instances list \
     --project="$GCP_PROJECT" \
     --filter="name=${GCP_INSTANCE_NAME}" \
-    --format="value(zone)" 2>/dev/null | head -1)
+    --format="value(zone)" 2>/dev/null | head -1) || true
   if [[ -z "$GCP_ZONE" ]]; then
     echo >&2
     gum style --foreground 196 "  ✗  Instance '$GCP_INSTANCE_NAME' not found in project '$GCP_PROJECT'." >&2
-    gum style --foreground 240 "     Has the VM been provisioned? Run: ./scripts/initialize.sh --profile $PROFILE_NAME" >&2
+    gum style --foreground 240 "     Has the VM been provisioned? Run: ./scripts/initialize.sh --profile ${PROFILE_NAME:-unknown}" >&2
     echo >&2
     exit 1
   fi
