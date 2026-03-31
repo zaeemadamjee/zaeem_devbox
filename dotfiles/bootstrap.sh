@@ -317,12 +317,26 @@ section "Docker"
 # Install Docker Engine via the official installer — this handles containerd,
 # dockerd, socket/service unit files, and full systemd integration on Ubuntu.
 step --stream "Docker Engine" \
-  "systemctl is-enabled docker &>/dev/null" \
+  "command -v docker &>/dev/null" \
   "curl -fsSL https://get.docker.com | sh"
+
+# Ensure the daemon is enabled to start on boot AND running right now.
+# Separated from the install step so a stopped daemon is fixed on re-runs.
+step "Docker daemon running" \
+  "systemctl is-active docker &>/dev/null" \
+  "sudo systemctl enable --now docker"
+
+# Check membership before the step so we can hint about newgrp afterwards.
+_docker_needs_group=false
+getent group docker | grep -qw "$USER" 2>/dev/null || _docker_needs_group=true
 
 step "docker group membership" \
   "getent group docker | grep -qw \"\$USER\"" \
   "sudo usermod -aG docker \"\$USER\""
+
+if ! $CHECK_ONLY && $_docker_needs_group; then
+  warn "docker group: run 'newgrp docker' in this session, or re-login for the change to take effect"
+fi
 
 # ---------------------------------------------------------------------------
 # Rust toolchain (rustup is installed via Homebrew but is keg-only)
@@ -341,6 +355,11 @@ step "Rust stable toolchain" \
 # Node.js (via nvm — installed by Homebrew above)
 # ---------------------------------------------------------------------------
 section "Node.js"
+
+# libatomic1 is required by Node.js binaries but absent on Ubuntu 24.04 by default.
+step "libatomic1 (Node.js dependency)" \
+  "dpkg -s libatomic1 &>/dev/null" \
+  "sudo apt-get install -y libatomic1"
 
 # Source nvm into the current shell so the nvm command is available below.
 # nvm itself is installed via Homebrew; its script lives in the Homebrew prefix.
