@@ -5,7 +5,7 @@ import { promisify } from "util"
 const execAsync = promisify(exec)
 
 const PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
-const DEBOUNCE_MS = 10000
+const DEBOUNCE_MS = 5000
 
 // Pending debounce timers keyed by sessionID
 const pending = new Map()
@@ -74,12 +74,25 @@ function clearPending(sessionID) {
   }
 }
 
-async function sendPushoverNotification(title, message, url) {
+/**
+ * Create a logger that routes through opencode's app.log API.
+ * Errors from the logging call itself are silently swallowed to avoid
+ * recursive noise — this is a best-effort diagnostic channel.
+ */
+function makeLogger(client) {
+  return async (level, message) => {
+    try {
+      await client.app.log({ body: { service: "opencode-notify", level, message } })
+    } catch {}
+  }
+}
+
+async function sendPushoverNotification(title, message, url, log) {
   const token = process.env.PUSHOVER_APP_TOKEN
   const user = process.env.PUSHOVER_USER_KEY
 
   if (!token || !user) {
-    console.error("[opencode-notify] Missing PUSHOVER_APP_TOKEN or PUSHOVER_USER_KEY")
+    await log("error", "Missing PUSHOVER_APP_TOKEN or PUSHOVER_USER_KEY")
     return
   }
 
@@ -96,10 +109,10 @@ async function sendPushoverNotification(title, message, url) {
       body: new URLSearchParams(params).toString(),
     })
     if (!response.ok) {
-      console.error(`[opencode-notify] Pushover API error: ${response.status}`)
+      await log("error", `Pushover API error: ${response.status}`)
     }
   } catch (err) {
-    console.error(`[opencode-notify] Failed to send notification: ${err}`)
+    await log("error", `Failed to send notification: ${err}`)
   }
 }
 
@@ -108,11 +121,11 @@ async function sendPushoverNotification(title, message, url) {
  * Rapid back-to-back events (e.g. permission.updated + permission.ask)
  * collapse into a single notification.
  */
-function dispatch(sessionID, title, message, url) {
+function dispatch(sessionID, title, message, url, log) {
   clearPending(sessionID)
   const timer = setTimeout(async () => {
     pending.delete(sessionID)
-    await sendPushoverNotification(title, message, url)
+    await sendPushoverNotification(title, message, url, log)
   }, DEBOUNCE_MS)
   pending.set(sessionID, timer)
 }
@@ -196,20 +209,21 @@ async function buildNotification(client, directory, sessionID, eventType, fallba
 }
 
 export const PushoverNotifyPlugin = async (input) => {
+  const { client, directory, serverUrl } = input
+  const log = makeLogger(client)
+
   if (process.env.OPENCODE_NOTIFY === "0") {
-    console.log("[opencode-notify] Notifications disabled (OPENCODE_NOTIFY=0)")
+    await log("info", "Notifications disabled (OPENCODE_NOTIFY=0)")
     return {}
   }
 
   const token = process.env.PUSHOVER_APP_TOKEN
   const user = process.env.PUSHOVER_USER_KEY
   if (!token || !user) {
-    console.warn("[opencode-notify] Missing credentials. Set PUSHOVER_APP_TOKEN and PUSHOVER_USER_KEY")
+    await log("warn", "Missing credentials — set PUSHOVER_APP_TOKEN and PUSHOVER_USER_KEY")
   } else {
-    console.log("[opencode-notify] Plugin loaded")
+    await log("info", "Plugin loaded")
   }
-
-  const { client, directory, serverUrl } = input
 
   // Kick off Tailscale hostname resolution eagerly so it's ready by first notification
   resolveWebUrl(serverUrl)
@@ -229,18 +243,18 @@ export const PushoverNotifyPlugin = async (input) => {
       if (event.type === "session.idle") {
         const { title, message, resolvedType, url } = await buildNotification(client, directory, sessionID, "complete", undefined, serverUrl)
         if (resolvedType === "subagent_complete") return // skip subagent completions
-        dispatch(sessionID, title, message, url)
+        dispatch(sessionID, title, message, url, log)
       } else if (event.type === "session.error") {
         const rawError = event.properties?.error
         const errorMessage = rawError?.data?.message ?? rawError?.name ?? "Unknown error"
         const { title, message, url } = await buildNotification(client, directory, sessionID, "error", errorMessage, serverUrl)
-        dispatch(sessionID, title, message, url)
+        dispatch(sessionID, title, message, url, log)
       } else if (event.type === "permission.updated") {
         const { title, message, url } = await buildNotification(client, directory, sessionID, "permission", undefined, serverUrl)
-        dispatch(sessionID, title, message, url)
+        dispatch(sessionID, title, message, url, log)
       }
     } catch (err) {
-      console.error(`[opencode-notify] Event hook error: ${err}`)
+      await log("error", `Event hook error: ${err}`)
     }
   }
 
@@ -248,9 +262,9 @@ export const PushoverNotifyPlugin = async (input) => {
     try {
       const sessionID = hookInput?.sessionID ?? null
       const { title, message, url } = await buildNotification(client, directory, sessionID, "permission", undefined, serverUrl)
-      dispatch(sessionID, title, message, url)
+      dispatch(sessionID, title, message, url, log)
     } catch (err) {
-      console.error(`[opencode-notify] Permission.ask hook error: ${err}`)
+      await log("error", `Permission.ask hook error: ${err}`)
     }
   }
 
@@ -259,10 +273,10 @@ export const PushoverNotifyPlugin = async (input) => {
       if (hookInput?.tool === "question") {
         const sessionID = hookInput?.sessionID ?? null
         const { title, message, url } = await buildNotification(client, directory, sessionID, "question", undefined, serverUrl)
-        dispatch(sessionID, title, message, url)
+        dispatch(sessionID, title, message, url, log)
       }
     } catch (err) {
-      console.error(`[opencode-notify] Tool.execute.before hook error: ${err}`)
+      await log("error", `Tool.execute.before hook error: ${err}`)
     }
   }
 
