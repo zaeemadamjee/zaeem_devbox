@@ -379,6 +379,14 @@ live_step "claude code" "(may take a minute)" \
   "command -v claude" \
   "curl -fsSL https://claude.ai/install.sh | bash"
 
+step "superpowers plugin (claude code)" \
+  "test -d \"\$HOME/.claude/plugins/superpowers\"" \
+  "claude plugin install superpowers@claude-plugins-official"
+
+step "impeccable plugin (claude code)" \
+  "test -d \"\$HOME/.claude/plugins/impeccable\"" \
+  "claude plugin install impeccable@impeccable"
+
 live_step "opencode" "(may take a minute)" \
   "command -v opencode" \
   "curl -fsSL https://opencode.ai/install | bash"

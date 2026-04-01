@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-scheduler", "./pushover-notify.js"],
+  "plugin": ["opencode-scheduler", "./pushover-notify.js", "superpowers@git+https://github.com/obra/superpowers.git"],
   "mcp": {
     "notion": {
       "type": "remote",
