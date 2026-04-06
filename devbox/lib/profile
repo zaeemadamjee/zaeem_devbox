@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# devbox/lib/profile — Shared profile loading and Terraform helpers.
+#
+# Source this file at the top of each operational script:
+#
+#   BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#   source "$BIN_DIR/../devbox/lib/profile"
+
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
+TERRAFORM_DIR="$REPO_ROOT/devbox/terraform"
+
+# shellcheck source=../../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+
+# ---------------------------------------------------------------------------
+# parse_profile_flag "$@"
+#   Extracts the profile name from script arguments.
+#   Accepts either a named flag or a bare positional argument:
+#     --profile <name> | -p <name> | <name>
+#   Prints the profile name to stdout. Exits with error if not provided.
+# ---------------------------------------------------------------------------
+parse_profile_flag() {
+  local profile=""
+  local i=0
+  local args=("$@")
+  while [[ $i -lt ${#args[@]} ]]; do
+    case "${args[$i]}" in
+      --profile|-p)
+        i=$((i + 1))
+        profile="${args[$i]:-}"
+        ;;
+      -*)
+        ;;  # skip other flags
+      *)
+        [[ -z "$profile" ]] && profile="${args[$i]}"
+        ;;
+    esac
+    i=$((i + 1))
+  done
+
+  if [[ -z "$profile" ]]; then
+    log_error "profile name is required"
+    _list_profiles >&2
+    exit 1
+  fi
+
+  echo "$profile"
+}
+
+# ---------------------------------------------------------------------------
+# load_profile <name>
+#   Sources devbox/profiles/<name> and validates required variables.
+# ---------------------------------------------------------------------------
+load_profile() {
+  local profile_name="$1"
+  local profile_file="$REPO_ROOT/devbox/profiles/${profile_name}"
+
+  if [[ ! -f "$profile_file" ]]; then
+    log_error "Profile not found: '$profile_name'"
+    _list_profiles >&2
+    exit 1
+  fi
+
+  # shellcheck source=/dev/null
+  source "$profile_file"
+
+  local required=(PROFILE_NAME GCP_PROJECT GCP_REGION GCP_INSTANCE_NAME VM_MACHINE_TYPE VM_DISK_SIZE IDLE_TIMER_ENABLED)
+  for var in "${required[@]}"; do
+    if [[ -z "${!var:-}" ]]; then
+      log_error "Profile '$profile_name' is missing required variable: $var"
+      exit 1
+    fi
+  done
+
+  GCP_ZONE="${GCP_ZONE:-}"
+  STATIC_IP="${STATIC_IP:-false}"
+  SSH_PUBLIC_KEYS=("${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}")
+  REPOS=("${REPOS[@]+"${REPOS[@]}"}")
+  FIREWALL_ALLOW_PORTS=("${FIREWALL_ALLOW_PORTS[@]+"${FIREWALL_ALLOW_PORTS[@]}"}")
+}
+
+# ---------------------------------------------------------------------------
+# check_gcloud_auth
+#   Verifies that gcloud credentials are valid. Triggers re-auth if expired.
+# ---------------------------------------------------------------------------
+check_gcloud_auth() {
+  if gcloud auth print-access-token >/dev/null; then
+    return 0
+  fi
+
+  log_warn "gcloud credentials expired or missing"
+  log_dim "A browser window will open to re-authenticate."
+  log_dim "Complete sign-in, then this script will continue."
+  gcloud auth login
+}
+
+# ---------------------------------------------------------------------------
+# check_gcp_project
+#   Validates that the active gcloud project matches the profile's GCP_PROJECT.
+# ---------------------------------------------------------------------------
+check_gcp_project() {
+  local active_project
+  active_project=$(gcloud config get-value project 2>/dev/null)
+
+  if [[ "$active_project" != "$GCP_PROJECT" ]]; then
+    log_error "GCP project mismatch"
+    log_dim "Profile:   ${PROFILE_NAME:-unknown}"
+    log_dim "Expected:  $GCP_PROJECT"
+    log_dim "Active:    $active_project"
+    log_dim "Fix: gcloud config set project $GCP_PROJECT"
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# resolve_instance_zone
+#   If GCP_ZONE is empty, looks up the zone of the existing VM instance.
+# ---------------------------------------------------------------------------
+resolve_instance_zone() {
+  if [[ -n "$GCP_ZONE" ]]; then
+    return
+  fi
+  GCP_ZONE=$(gcloud compute instances list \
+    --project="$GCP_PROJECT" \
+    --filter="name=${GCP_INSTANCE_NAME}" \
+    --format="value(zone)" 2>/dev/null | head -1) || true
+  if [[ -z "$GCP_ZONE" ]]; then
+    log_error "Instance '$GCP_INSTANCE_NAME' not found in project '$GCP_PROJECT'."
+    log_dim "Has the VM been provisioned? Run: ./bin/initialize --profile ${PROFILE_NAME:-unknown}"
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# terraform_init_profile
+#   Runs terraform init with the correct backend config for this profile.
+# ---------------------------------------------------------------------------
+terraform_init_profile() {
+  local bucket="${GCP_PROJECT}-zaeem-devbox-tf-state"
+  log_info "Initializing Terraform (profile: $PROFILE_NAME)..."
+  cd "$TERRAFORM_DIR" && terraform init -reconfigure \
+    -backend-config="bucket=${bucket}" \
+    -backend-config="prefix=${PROFILE_NAME}" \
+    -input=false -no-color > /dev/null
+  log_ok "Terraform initialized  (gs://${bucket}/${PROFILE_NAME})"
+}
+
+# ---------------------------------------------------------------------------
+# setup_tfvars
+#   Writes profile variables to a temp file and exports TMPVARS.
+# ---------------------------------------------------------------------------
+setup_tfvars() {
+  TMPVARS="/tmp/devbox-profile-${PROFILE_NAME}.tfvars"
+  trap 'rm -f "$TMPVARS"' EXIT
+  generate_tfvars "$TMPVARS"
+}
+
+# ---------------------------------------------------------------------------
+# generate_tfvars <output-file>
+# ---------------------------------------------------------------------------
+generate_tfvars() {
+  local tmpfile="$1"
+
+  local ssh_keys_hcl
+  ssh_keys_hcl=$(_build_hcl_list "${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}")
+  local repos_hcl
+  repos_hcl=$(_build_hcl_list "${REPOS[@]+"${REPOS[@]}"}")
+  local ports_hcl
+  ports_hcl=$(_build_hcl_list "${FIREWALL_ALLOW_PORTS[@]+"${FIREWALL_ALLOW_PORTS[@]}"}")
+
+  cat > "$tmpfile" <<EOF
+project_id           = "${GCP_PROJECT}"
+region               = "${GCP_REGION}"
+zone                 = "${GCP_ZONE}"
+instance_name        = "${GCP_INSTANCE_NAME}"
+machine_type         = "${VM_MACHINE_TYPE}"
+disk_size            = ${VM_DISK_SIZE}
+idle_timer_enabled   = ${IDLE_TIMER_ENABLED}
+static_ip            = ${STATIC_IP}
+profile_name         = "${PROFILE_NAME}"
+ssh_public_keys      = ${ssh_keys_hcl}
+repos                = ${repos_hcl}
+firewall_allow_ports = ${ports_hcl}
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+_list_profiles() {
+  local profiles_dir="$REPO_ROOT/devbox/profiles"
+  if compgen -G "$profiles_dir/*" > /dev/null 2>&1; then
+    log_dim "Available profiles:"
+    for f in "$profiles_dir"/*; do
+      [[ "$f" == *.env ]] && continue
+      log_dim "  ·  $(basename "$f")"
+    done
+  else
+    log_dim "No profiles found in devbox/profiles/"
+  fi
+}
+
+_build_hcl_list() {
+  if [[ $# -eq 0 ]]; then
+    echo "[]"
+    return
+  fi
+  local result="["$'\n'
+  for item in "$@"; do
+    result+="  \"${item}\","$'\n'
+  done
+  result+="]"
+  echo "$result"
+}

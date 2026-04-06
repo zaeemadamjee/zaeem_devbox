@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# reset — Wipe and recreate a devbox VM (fresh disk, full bootstrap on next login).
+#
+# Usage: ./bin/reset --profile <name>
+#
+# Taints the Terraform VM resource and re-applies, destroying and recreating
+# only the compute instance. Service account, IAM, and firewall are left intact.
+
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$BIN_DIR/../devbox/lib/profile"
+
+PROFILE=$(parse_profile_flag "$@")
+load_profile "$PROFILE"
+check_gcp_project
+check_gcloud_auth
+
+log_warn "DESTRUCTIVE OPERATION"
+log_dim "This will DESTROY and RECREATE: $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)"
+log_dim "All data on the VM disk will be permanently lost."
+echo
+
+printf "  Destroy and recreate %s? [y/N]: " "$GCP_INSTANCE_NAME"
+read -r _confirm
+if [[ "$_confirm" != "y" && "$_confirm" != "Y" ]]; then
+  log_warn "Aborted."
+  exit 0
+fi
+
+log_section "Terraform"
+terraform_init_profile
+setup_tfvars
+
+cd "$TERRAFORM_DIR"
+
+log_info "Tainting VM resource..."
+terraform taint google_compute_instance.devbox
+log_ok "VM resource tainted"
+
+echo
+log_dim "Terraform will show the plan below and ask for confirmation."
+echo
+
+terraform apply -var-file="$TMPVARS"
+
+log_banner "$GCP_INSTANCE_NAME recreated"
+log_dim "Next:  ./bin/start --profile $PROFILE_NAME"

@@ -1,0 +1,70 @@
+# Brewfile — hermetic CLI tool dependencies via Homebrew.
+#
+# Install:  brew bundle install --file=pkgs/Brewfile
+# Check:    brew bundle check   --file=pkgs/Brewfile
+# Update:   brew upgrade && brew bundle install --file=pkgs/Brewfile
+
+# ---------------------------------------------------------------------------
+# Version control
+# ---------------------------------------------------------------------------
+brew "git"
+brew "gh"
+brew "lazygit"
+brew "tig"
+brew "git-delta"       # better diffs
+
+# ---------------------------------------------------------------------------
+# Shell & multiplexer
+# ---------------------------------------------------------------------------
+brew "tmux"
+brew "stow"            # dotfile symlink manager
+
+# ---------------------------------------------------------------------------
+# Languages
+# ---------------------------------------------------------------------------
+brew "python@3.12"
+brew "go"
+brew "rustup"          # manages Rust toolchain; run `rustup default stable` once
+brew "nvm"             # Node version manager; run `nvm install 22` once (handled by bootstrap)
+
+# ---------------------------------------------------------------------------
+# Core CLI utilities
+# ---------------------------------------------------------------------------
+brew "ripgrep"
+brew "fzf"
+brew "fd"
+brew "jq"
+brew "curl"
+brew "wget"
+brew "tree"
+brew "unzip"
+brew "make"
+brew "gcc"
+brew "vim"
+brew "neovim"
+
+# ---------------------------------------------------------------------------
+# Modern CLI replacements
+# ---------------------------------------------------------------------------
+brew "bat"             # cat
+brew "eza"             # ls
+brew "btop"            # top / htop
+
+# ---------------------------------------------------------------------------
+# Navigation & file management
+# ---------------------------------------------------------------------------
+brew "zoxide"          # smart cd
+brew "yazi"            # terminal file manager
+
+# ---------------------------------------------------------------------------
+# Dev utilities
+# ---------------------------------------------------------------------------
+brew "fx"              # JSON explorer
+brew "glow"            # Markdown viewer
+brew "zellij"          # terminal workspace
+
+# ---------------------------------------------------------------------------
+# Prompt
+# ---------------------------------------------------------------------------
+brew "starship"
+brew "atuin"           # shell history

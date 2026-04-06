@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if command -v go &>/dev/null; then
+  log_info "Go already installed: $(go version | cut -d' ' -f3)"
+else
+  log_info "Installing Go via Homebrew..."
+  brew install go
+  log_ok "Go $(go version | cut -d' ' -f3)"
+
+  brew install golangci-lint
+fi

@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# orchestrator — Manage devbox VMs.
+#
+# Usage: ./bin/orchestrator <command> [<profile>]
+#
+# Commands:
+#   status               Show GCP auth + live VM state for all profiles
+#   start      <profile> Start VM and SSH in
+#   stop       <profile> Stop the VM
+#   reset      <profile> Wipe and recreate VM  (destructive)
+#   initialize <profile> First-time provision
+#   help                 Show this message
+
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$BIN_DIR/../devbox/lib/profile"
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_status() {
+  log_section "GCP"
+
+  local account project
+  account=$(gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | head -1 || true)
+  project=$(gcloud config get-value project 2>/dev/null | tr -d '[:space:]' || true)
+
+  if [[ -z "$account" ]]; then
+    log_error "Not authenticated — run: gcloud auth login"
+    exit 1
+  fi
+
+  log_ok "Account  $account"
+  log_ok "Project  ${project:-(none)}"
+
+  local profile_names=()
+  for f in "$REPO_ROOT/devbox/profiles/"*; do
+    [[ -f "$f" ]] && [[ "$f" != *.env ]] && profile_names+=("$(basename "$f")")
+  done
+
+  if [[ ${#profile_names[@]} -eq 0 ]]; then
+    log_error "No profiles found in devbox/profiles/"
+    exit 1
+  fi
+
+  log_section "VM Status"
+
+  _STATUS_TMPDIR=$(mktemp -d)
+  trap 'rm -rf "$_STATUS_TMPDIR"' EXIT
+  local tmpdir="$_STATUS_TMPDIR"
+  printf '%s\n' "${profile_names[@]}" > "$tmpdir/profiles.txt"
+
+  local active_project="$project"
+
+  while IFS= read -r name; do
+    (
+      # shellcheck source=/dev/null
+      source "$REPO_ROOT/devbox/profiles/${name}" 2>/dev/null || true
+
+      if [[ "$GCP_PROJECT" != "$active_project" ]]; then
+        printf '%s|WRONG_ACCOUNT||%s|%s\n' \
+          "$name" "$GCP_INSTANCE_NAME" "$VM_MACHINE_TYPE" > "$tmpdir/$name.txt"
+        exit 0
+      fi
+
+      local result
+      result=$(gcloud compute instances list \
+        --project="$GCP_PROJECT" \
+        --filter="name=${GCP_INSTANCE_NAME}" \
+        --format="csv[no-heading](status,zone.basename(),machineType.basename())" \
+        2>/dev/null | head -1 || true)
+
+      if [[ -z "$result" ]]; then
+        printf '%s|NOT_FOUND||%s|%s\n' \
+          "$name" "$GCP_INSTANCE_NAME" "$VM_MACHINE_TYPE" > "$tmpdir/$name.txt"
+      else
+        local st zone mtype
+        IFS=',' read -r st zone mtype <<< "$result"
+        printf '%s|%s|%s|%s|%s\n' \
+          "$name" "$st" "$zone" "$GCP_INSTANCE_NAME" "${mtype:-$VM_MACHINE_TYPE}" \
+          > "$tmpdir/$name.txt"
+      fi
+    ) &
+  done < "$tmpdir/profiles.txt"
+  wait
+
+  # Render status table (inline ANSI for fixed-width column alignment).
+  local R=$'\033[0m' G=$'\033[32m' Y=$'\033[33m' C=$'\033[36m' GRAY=$'\033[90m' D=$'\033[2m'
+  echo
+  for name in "${profile_names[@]}"; do
+    if [[ ! -f "$tmpdir/${name}.txt" ]]; then
+      log_error "$name  (error fetching status)"
+      continue
+    fi
+
+    local pname status zone vm_name mtype sym sc
+    IFS='|' read -r pname status zone vm_name mtype < "$tmpdir/${name}.txt"
+
+    case "$status" in
+      RUNNING)              sym="${G}✓${R}"; sc="${G}$(printf '%-10s' RUNNING)${R}" ;;
+      TERMINATED)           sym="${Y}■${R}"; sc="${Y}$(printf '%-10s' STOPPED)${R}" ;;
+      STAGING|PROVISIONING) sym="${C}↻${R}"; sc="${C}$(printf '%-10s' "$status")${R}" ;;
+      WRONG_ACCOUNT)        sym="${Y}⚠${R}"; sc="${Y}$(printf '%-10s' 'wrong acct')${R}" ;;
+      NOT_FOUND)            sym="${GRAY}·${R}"; sc="${GRAY}$(printf '%-10s' 'not found')${R}" ;;
+      *)                    sym="${Y}⚠${R}"; sc="${Y}$(printf '%-10s' "$status")${R}" ;;
+    esac
+
+    printf "  %s  %-12s  %-26s  %s  ${D}%-14s  %s${R}\n" \
+      "$sym" "$pname" "$vm_name" "$sc" "${zone:--}" "${mtype:--}"
+  done
+  echo
+}
+
+cmd_help() {
+  cat <<EOF
+
+  orchestrator — manage devbox VMs
+
+  Usage: ./bin/orchestrator <command> [<profile>]
+
+  Commands:
+    status               Show GCP auth + live VM state for all profiles
+    start      <profile> Start VM and SSH in
+    stop       <profile> Stop the VM
+    reset      <profile> Wipe and recreate VM  (destructive)
+    initialize <profile> First-time provision
+    help                 Show this message
+
+  Examples:
+    ./bin/orchestrator status
+    ./bin/orchestrator start personal
+    ./bin/orchestrator stop  mini
+
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    status)     cmd_status ;;
+    start)      exec "$BIN_DIR/start"      "$@" ;;
+    stop)       exec "$BIN_DIR/stop"       "$@" ;;
+    reset)      exec "$BIN_DIR/reset"      "$@" ;;
+    initialize) exec "$BIN_DIR/initialize" "$@" ;;
+    help|--help|-h) cmd_help ;;
+    *)
+      log_error "Unknown command: $cmd"
+      cmd_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

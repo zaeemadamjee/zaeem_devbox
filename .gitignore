@@ -1,6 +1,11 @@
 .DS_Store
-scripts/profiles/*.env
+devbox/profiles/*.env
 .worktrees/
+devbox/terraform/.terraform/
+devbox/terraform/*.tfstate
+devbox/terraform/*.tfstate.backup
+devbox/terraform/*.tfvars
+devbox/terraform/.terraform.lock.hcl
 terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.backup

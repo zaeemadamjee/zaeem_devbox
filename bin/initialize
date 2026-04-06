@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# initialize — First-time provisioning of a devbox VM.
+#
+# Usage: ./bin/initialize --profile <name>
+#
+# Runs all setup steps in order:
+#   1. Enable required GCP APIs
+#   2. Generate SSH key (if missing) and confirm it's in the profile
+#   3. Create the Terraform state bucket (if missing)
+#   4. terraform init, import any pre-existing GCP resources, then terraform apply
+#
+# All steps are idempotent — safe to re-run.
+# For subsequent wipe-and-recreate of an existing VM, use bin/reset instead.
+
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$BIN_DIR/../devbox/lib/profile"
+
+PROFILE=$(parse_profile_flag "$@")
+load_profile "$PROFILE"
+check_gcp_project
+check_gcloud_auth
+
+SSH_KEY_PATH="$HOME/.ssh/zaeem_devbox"
+
+# ---------------------------------------------------------------------------
+# 0. Validate region
+# ---------------------------------------------------------------------------
+log_section "Validate"
+
+if ! gcloud compute regions describe "$GCP_REGION" --project="$GCP_PROJECT" &>/dev/null; then
+  log_error "Region '$GCP_REGION' is not valid in project '$GCP_PROJECT'."
+  log_dim "Valid regions:"
+  gcloud compute regions list --project="$GCP_PROJECT" --format="value(name)" 2>/dev/null \
+    | sort | while IFS= read -r r; do log_dim "  · $r"; done
+  exit 1
+fi
+log_ok "Region '$GCP_REGION' is valid"
+
+# ---------------------------------------------------------------------------
+# 1. Enable required GCP APIs
+# ---------------------------------------------------------------------------
+log_section "Step 1/4 — GCP APIs"
+
+for api in compute.googleapis.com storage.googleapis.com; do
+  if gcloud services list --project="$GCP_PROJECT" \
+       --filter="name:${api}" --format="value(name)" 2>/dev/null | grep -q "$api"; then
+    log_ok "$api (already enabled)"
+  else
+    log_info "Enabling $api..."
+    gcloud services enable "$api" --project="$GCP_PROJECT"
+    log_ok "$api enabled"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# 2. Generate SSH key and confirm it's in the profile
+# ---------------------------------------------------------------------------
+log_section "Step 2/4 — SSH key"
+
+if [[ -f "$SSH_KEY_PATH" ]]; then
+  log_ok "SSH key at $SSH_KEY_PATH (already exists)"
+else
+  log_info "Generating ed25519 SSH key..."
+  ssh-keygen -t ed25519 -C "zaeem-devbox" -f "$SSH_KEY_PATH" -N ""
+  log_ok "SSH key generated at $SSH_KEY_PATH"
+fi
+
+PUBLIC_KEY=$(cat "${SSH_KEY_PATH}.pub")
+
+if printf '%s\n' "${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}" | grep -qF "$PUBLIC_KEY"; then
+  log_ok "Public key already in profile '$PROFILE_NAME'"
+else
+  log_warn "Your public key is not yet in the profile's SSH_PUBLIC_KEYS."
+  echo
+  log_dim "Add this line to devbox/profiles/${PROFILE_NAME}:"
+  echo
+  log_info "$PUBLIC_KEY"
+  echo
+  printf "  Press Enter once you've added the key, or Ctrl-C to abort: "
+  read -r
+
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/devbox/profiles/${PROFILE_NAME}"
+  if ! printf '%s\n' "${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}" | grep -qF "$PUBLIC_KEY"; then
+    log_error "Public key still not found in profile. Please add it and re-run."
+    exit 1
+  fi
+  log_ok "Public key confirmed in profile"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Create Terraform state bucket
+# ---------------------------------------------------------------------------
+log_section "Step 3/4 — Terraform state bucket"
+
+BUCKET_NAME="${GCP_PROJECT}-zaeem-devbox-tf-state"
+BUCKET_URI="gs://${BUCKET_NAME}"
+
+if gcloud storage buckets describe "$BUCKET_URI" --project="$GCP_PROJECT" &>/dev/null; then
+  log_ok "Bucket $BUCKET_URI (already exists)"
+else
+  log_info "Creating bucket $BUCKET_URI..."
+  gcloud storage buckets create "$BUCKET_URI" \
+    --project="$GCP_PROJECT" \
+    --location='US' \
+    --uniform-bucket-level-access
+  gcloud storage buckets update "$BUCKET_URI" --versioning
+  log_ok "Bucket created with versioning enabled"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Terraform init + import existing resources + apply
+# ---------------------------------------------------------------------------
+log_section "Step 4/4 — Terraform"
+
+terraform_init_profile
+setup_tfvars
+cd "$TERRAFORM_DIR"
+
+if gcloud compute firewall-rules describe "devbox-allow-ssh" --project="$GCP_PROJECT" &>/dev/null 2>&1; then
+  if ! terraform state show google_compute_firewall.allow_ssh &>/dev/null; then
+    log_info "Importing existing firewall rule..."
+    terraform import -var-file="$TMPVARS" \
+      google_compute_firewall.allow_ssh \
+      "projects/${GCP_PROJECT}/global/firewalls/devbox-allow-ssh"
+    log_ok "Firewall rule imported"
+  else
+    log_ok "Firewall rule (already in state)"
+  fi
+fi
+
+if gcloud compute instances describe "$GCP_INSTANCE_NAME" \
+     --zone="$GCP_ZONE" --project="$GCP_PROJECT" &>/dev/null 2>&1; then
+  if ! terraform state show google_compute_instance.devbox &>/dev/null; then
+    log_info "Importing existing VM instance..."
+    terraform import -var-file="$TMPVARS" \
+      google_compute_instance.devbox \
+      "${GCP_PROJECT}/${GCP_ZONE}/${GCP_INSTANCE_NAME}"
+    log_ok "VM instance imported"
+  else
+    log_ok "VM instance (already in state)"
+  fi
+fi
+
+echo
+log_dim "Terraform will show the plan below and ask for confirmation."
+echo
+
+terraform apply -var-file="$TMPVARS"
+
+log_banner "VM provisioned successfully"
+log_dim "Next:  ./bin/start --profile $PROFILE_NAME"
+log_dim "       (bootstrap runs interactively on first SSH login)"

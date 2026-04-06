@@ -1,0 +1,305 @@
+#!/usr/bin/env bash
+# setup-mac — Set up dev environment on a fresh macOS machine.
+#
+# Usage: ./bin/setup-mac [command]
+#
+# Commands:
+#   all      Run install + link + langs + tools  (default)
+#   install  Run brew bundle from pkgs/Brewfile
+#   link     Stow all config packages into ~
+#   langs    Install language toolchains (sourced from pkgs/lang/*)
+#   tools    Install coding tools (claude code, opencode, TPM)
+#   check    Print status of all components without modifying anything
+#   help     Show this message
+#
+# Safe to re-run (idempotent).
+
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$BIN_DIR/.." && pwd)"
+CONFIG_DIR="$REPO_ROOT/config"
+
+# ---------------------------------------------------------------------------
+# Phase 1 — plain-echo bootstrap (runs before lib/log.sh is available)
+# ---------------------------------------------------------------------------
+
+_pre_ok()   { printf "  \033[32m✓\033[0m  %s\n" "$*"; }
+_pre_info() { printf "  %s\n" "$*"; }
+_pre_fail() { printf "  \033[31m✗\033[0m  %s\n" "$*" >&2; }
+
+# Xcode CLI tools are required for Homebrew and git.
+if ! xcode-select -p &>/dev/null; then
+  _pre_info "Xcode CLI tools not found — triggering install dialog..."
+  xcode-select --install
+  _pre_info "Waiting for Xcode CLI tools to finish installing..."
+  until xcode-select -p &>/dev/null; do sleep 5; done
+  _pre_ok "Xcode CLI tools"
+fi
+
+# Homebrew — support both Apple Silicon (/opt/homebrew) and Intel (/usr/local).
+if ! command -v brew &>/dev/null; then
+  _pre_info "Installing Homebrew..."
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  for _brew_bin in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [[ -x "$_brew_bin" ]] && eval "$("$_brew_bin" shellenv)" && break
+  done
+  _pre_ok "Homebrew"
+else
+  eval "$(brew shellenv 2>/dev/null || true)"
+fi
+
+export BREW_PREFIX
+BREW_PREFIX="$(brew --prefix)"
+
+# lib/log.sh is now sourceable — switch to it for all remaining output.
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+
+# ---------------------------------------------------------------------------
+# Shared state
+# ---------------------------------------------------------------------------
+FAILED=()
+
+_track_failed() { FAILED+=("$1"); }
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_install() {
+  log_section "Homebrew packages"
+
+  if brew bundle check --file="$REPO_ROOT/pkgs/Brewfile" &>/dev/null; then
+    log_info "All packages already installed"
+  else
+    log_info "Running brew bundle (first run may take several minutes)..."
+    if ! brew bundle install --file="$REPO_ROOT/pkgs/Brewfile"; then
+      log_warn "brew bundle had failures — retrying once..."
+      if ! brew bundle install --file="$REPO_ROOT/pkgs/Brewfile"; then
+        log_error "brew bundle failed after retry"
+        _track_failed "brew bundle"
+        return
+      fi
+    fi
+    log_ok "brew bundle"
+  fi
+
+  # Re-resolve PATH so tools installed in this run are available immediately.
+  export PATH="${BREW_PREFIX}/bin:$PATH"
+}
+
+cmd_link() {
+  log_section "Dotfiles"
+
+  local packages="aliases atuin claude git ghostty nvim opencode starship tmux zsh"
+  local stow="${BREW_PREFIX}/bin/stow"
+
+  for pkg in $packages; do
+    if "$stow" -d "$CONFIG_DIR" -n "$pkg" -t "$HOME" 2>/dev/null; then
+      log_info "Linking $pkg..."
+      "$stow" -d "$CONFIG_DIR" "$pkg" -t "$HOME" --restow \
+        || { log_warn "stow $pkg failed"; _track_failed "stow $pkg"; }
+    else
+      log_info "$pkg: already linked"
+    fi
+  done
+
+  log_ok "Dotfiles linked"
+}
+
+cmd_langs() {
+  log_section "Languages"
+
+  # rustup is keg-only — add its bin dir to PATH before the rust lang file runs.
+  local brew_rustup="${BREW_PREFIX}/opt/rustup/bin"
+  [[ -d "$brew_rustup" ]] && export PATH="$brew_rustup:$PATH"
+
+  for script in "$REPO_ROOT/pkgs/lang"/*; do
+    [[ -f "$script" ]] || continue
+    local name
+    name="$(basename "$script")"
+    log_info "$name..."
+    # shellcheck source=/dev/null
+    source "$script" || { log_warn "$name failed"; _track_failed "lang/$name"; }
+  done
+}
+
+cmd_tools() {
+  log_section "Tools"
+
+  # tmux plugin manager
+  if [[ -d "$HOME/.tmux/plugins/tpm" ]]; then
+    log_info "tmux plugin manager: already installed"
+  else
+    log_info "tmux plugin manager: installing..."
+    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" \
+      && log_ok "tmux plugin manager" \
+      || { log_warn "tmux plugin manager failed"; _track_failed "tpm"; }
+  fi
+
+  # claude code
+  if command -v claude &>/dev/null; then
+    log_info "claude code: already installed"
+  else
+    log_info "claude code: installing (may take a minute)..."
+    curl -fsSL https://claude.ai/install.sh | bash \
+      && log_ok "claude code" \
+      || { log_warn "claude code install failed"; _track_failed "claude code"; }
+  fi
+
+  # claude plugins
+  if [[ ! -d "$HOME/.claude/plugins/superpowers" ]]; then
+    log_info "claude superpowers plugin: installing..."
+    claude plugin install superpowers@claude-plugins-official \
+      && log_ok "superpowers plugin" \
+      || { log_warn "superpowers plugin failed"; _track_failed "superpowers plugin"; }
+  else
+    log_info "claude superpowers plugin: already installed"
+  fi
+
+  if [[ ! -d "$HOME/.claude/plugins/impeccable" ]]; then
+    log_info "claude impeccable plugin: installing..."
+    claude plugin install impeccable@impeccable \
+      && log_ok "impeccable plugin" \
+      || { log_warn "impeccable plugin failed"; _track_failed "impeccable plugin"; }
+  else
+    log_info "claude impeccable plugin: already installed"
+  fi
+
+  # opencode
+  if command -v opencode &>/dev/null; then
+    log_info "opencode: already installed"
+  else
+    log_info "opencode: installing (may take a minute)..."
+    curl -fsSL https://opencode.ai/install | bash \
+      && log_ok "opencode" \
+      || { log_warn "opencode install failed"; _track_failed "opencode"; }
+  fi
+
+  # atuin history seed + tldr cache (best-effort, non-fatal)
+  log_info "Seeding tealdeer page cache..."
+  tldr --update >/dev/null 2>&1 || true
+
+  log_info "Importing atuin history..."
+  atuin import auto 2>/dev/null || true
+}
+
+cmd_check() {
+  log_banner "setup-mac check"
+
+  local missing=()
+
+  _chk() {
+    local label="$1" result="$2"
+    if [[ "$result" == "ok" ]]; then
+      log_ok "$label"
+    else
+      log_error "$label"
+      missing+=("$label")
+    fi
+  }
+
+  log_section "Prerequisites"
+  xcode-select -p &>/dev/null \
+    && _chk "Xcode CLI tools" ok || _chk "Xcode CLI tools" fail
+  command -v brew &>/dev/null \
+    && _chk "Homebrew" ok || _chk "Homebrew" fail
+
+  log_section "Homebrew packages"
+  brew bundle check --file="$REPO_ROOT/pkgs/Brewfile" &>/dev/null \
+    && _chk "brew bundle" ok || _chk "brew bundle" fail
+
+  log_section "Dotfiles"
+  local stow="${BREW_PREFIX}/bin/stow"
+  for pkg in aliases atuin claude git ghostty nvim opencode starship tmux zsh; do
+    "$stow" -d "$CONFIG_DIR" -n "$pkg" -t "$HOME" &>/dev/null \
+      && _chk "stow $pkg" ok || _chk "stow $pkg (already linked)" ok
+  done
+
+  log_section "Languages"
+  command -v rustc &>/dev/null  && _chk "rust"   ok || _chk "rust"   fail
+  command -v node  &>/dev/null  && _chk "node"   ok || _chk "node"   fail
+  command -v go    &>/dev/null  && _chk "go"     ok || _chk "go"     fail
+  command -v python3 &>/dev/null && _chk "python" ok || _chk "python" fail
+
+  log_section "Tools"
+  [[ -d "$HOME/.tmux/plugins/tpm" ]]           && _chk "tpm"       ok || _chk "tpm"       fail
+  command -v claude    &>/dev/null              && _chk "claude"    ok || _chk "claude"    fail
+  command -v opencode  &>/dev/null              && _chk "opencode"  ok || _chk "opencode"  fail
+
+  echo
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    log_ok "All components installed"
+  else
+    log_error "${#missing[@]} component(s) missing — run: ./bin/setup-mac"
+    exit 1
+  fi
+}
+
+cmd_all() {
+  log_banner "setup-mac"
+  cmd_install
+  cmd_link
+  cmd_langs
+  cmd_tools
+  _summary
+}
+
+cmd_help() {
+  cat <<EOF
+
+  setup-mac — provision a fresh macOS machine
+
+  Usage: ./bin/setup-mac [command]
+
+  Commands:
+    all      Run install + link + langs + tools  (default)
+    install  Run brew bundle from pkgs/Brewfile
+    link     Stow all config packages into ~
+    langs    Install language toolchains (pkgs/lang/*)
+    tools    Install coding tools (claude, opencode, TPM)
+    check    Print status of all components without modifying anything
+    help     Show this message
+
+EOF
+}
+
+_summary() {
+  echo
+  if [[ ${#FAILED[@]} -eq 0 ]]; then
+    log_ok "Setup complete — open a new shell for PATH changes to take effect"
+  else
+    log_warn "Setup complete with ${#FAILED[@]} failure(s):"
+    for f in "${FAILED[@]}"; do
+      log_dim "  · $f"
+    done
+    log_dim "Re-run ./bin/setup-mac to retry."
+  fi
+  echo
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+  local cmd="${1:-all}"
+  shift || true
+
+  case "$cmd" in
+    all)     cmd_all ;;
+    install) log_banner "setup-mac install"; cmd_install; _summary ;;
+    link)    log_banner "setup-mac link";    cmd_link;    _summary ;;
+    langs)   log_banner "setup-mac langs";   cmd_langs;   _summary ;;
+    tools)   log_banner "setup-mac tools";   cmd_tools;   _summary ;;
+    check)   cmd_check ;;
+    help|--help|-h) cmd_help ;;
+    *)
+      log_error "Unknown command: $cmd"
+      cmd_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

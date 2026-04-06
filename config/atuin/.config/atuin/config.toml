@@ -1,0 +1,21 @@
+style = "compact"
+
+[ui]
+columns = ["duration", "time", "directory", "command"]
+
+common_subcommands = [
+  "apt",
+  "c",
+  "cargo",
+  "docker",
+  "git",
+  "go",
+  "k",
+  "kubectl",
+  "npm",
+  "pnpm",
+  "port",
+  "systemctl",
+  "tmux",
+  "yarn",
+]

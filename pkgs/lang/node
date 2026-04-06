@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# nvm is installed via Homebrew (keg-only). BREW_PREFIX must be set by the caller.
+_NVM_SH="${BREW_PREFIX:-$(brew --prefix)}/opt/nvm/nvm.sh"
+
+export NVM_DIR="$HOME/.nvm"
+mkdir -p "$NVM_DIR"
+
+if [[ ! -s "$_NVM_SH" ]]; then
+  log_error "nvm not found at $_NVM_SH — ensure nvm is in the Brewfile and brew bundle has run"
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$_NVM_SH"
+
+if command -v node &>/dev/null; then
+  log_info "Node.js already installed: $(node --version)"
+else
+  log_info "Installing Node.js stable..."
+  nvm install stable
+  nvm alias default stable
+  log_ok "Node.js $(node --version)"
+  log_dim "npm $(npm --version)"
+fi
