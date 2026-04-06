@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# bootstrap — Set up dev box environment on a Terraform-provisioned Ubuntu 24.04 VM.
+# bootstrap — Set up a Terraform-provisioned Ubuntu 24.04 devbox VM.
 #
-# Run manually after first login (profile is required — no default):
-#   export DEVBOX_PROFILE=personal   # or: echo personal > ~/.config/devbox/profile
-#   bash ~/zaeem_devbox/devbox/bin/bootstrap [--check]
+# Usage: bootstrap [command]
 #
-# --check   Print status of every component without installing anything.
-# (no flag)  Install or repair anything that is missing.
+# Commands:
+#   all      Run everything  (default)
+#   install  Homebrew + brew bundle
+#   link     Stow dotfiles + .hushlogin
+#   langs    Language toolchains via pkgs/lang/*
+#   tools    Claude code, opencode, TPM, atuin, tldr
+#   docker   Docker Engine + daemon + group membership
+#   idle     Systemd idle timer
+#   repos    Clone workspace repos from GCE metadata
+#   check    Print ✓/✗ status without modifying anything
+#   help     Show this message
 #
 # Safe to re-run (idempotent).
-#
-# Note: git, curl, zsh, gum, and default shell are guaranteed by Terraform's
-# startup-script and do not need to be managed here.
+# Profile is read from DEVBOX_PROFILE env var or ~/.config/devbox/profile.
 
 set -euo pipefail
 
@@ -19,174 +24,44 @@ DEVBOX_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$DEVBOX_BIN_DIR/../.." && pwd)"
 CONFIG_DIR="$REPO_ROOT/config"
 DEVBOX_DIR="$REPO_ROOT/devbox"
-
-# Export so install bodies can access them when run in bash -c subshells via gum spin.
 export DEVBOX_BIN_DIR REPO_ROOT CONFIG_DIR DEVBOX_DIR
 
-# ---------------------------------------------------------------------------
-# Flags
-# ---------------------------------------------------------------------------
-CHECK_ONLY=false
-for arg in "$@"; do
-  [[ "$arg" == "--check" ]] && CHECK_ONLY=true
-done
+# shellcheck source=../../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
 
 # ---------------------------------------------------------------------------
-# Output helpers + timing
+# Profile resolution
 # ---------------------------------------------------------------------------
-GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; CYAN="\033[36m"; DIM="\033[2m"; RESET="\033[0m"
-
-if ! command -v gum &>/dev/null; then
-  echo ""
-  echo "  ✗  gum is not installed — it should have been installed by Terraform's startup-script."
-  echo "     Check /var/log/startup-script.log for errors."
-  echo ""
-  echo "     To install manually: sudo apt-get install -y gum"
-  echo "     Then re-run bootstrap."
-  echo ""
-  exit 1
-fi
-
-# Align gum spin spinner character (col 0 by default) with ✓/⚠/✗ symbols (col 2).
-# GUM_SPIN_PADDING adds left padding to the entire spinner+title row.
-export GUM_SPIN_PADDING="0 0 0 2"
-
-# Millisecond timestamp (falls back to seconds on systems without %3N).
-_t0()      { date +%s%3N 2>/dev/null || date +%s; }
-_elapsed() {
-  local d=$(( $(_t0) - $1 ))
-  (( d < 1000 )) && { echo "${d}ms"; return; }
-  echo "$(( d / 1000 )).$(( (d % 1000) / 100 ))s"
-}
-
-BOOTSTRAP_T0=$(_t0)
-
-section() { echo; gum style --bold --foreground 99 "  ▸  $*"; echo; }
-ok()      { printf "  ${GREEN}✓${RESET}  %s\n" "$*"; }
-skip()    { printf "  ${GREEN}✓${RESET}  ${DIM}%s (already installed)${RESET}\n" "$*"; }
-warn()    { printf "  ${YELLOW}⚠${RESET}  %s\n" "$*"; }
-fail()    { printf "  ${RED}✗${RESET}  %s\n" "$*"; }
-
-# timed_spin [--show-output] <title> <cmd> [args...]
-# Runs cmd under a gum spinner and prints ✓ with elapsed time when done.
-timed_spin() {
-  local show_output=""
-  [[ "${1:-}" == "--show-output" ]] && { show_output="--show-output"; shift; }
-  local title="$1"; shift
-  local t0; t0=$(_t0)
-  # shellcheck disable=SC2086
-  gum spin $show_output --spinner dot --title "${title}..." -- "$@"
-  ok "${title}  $(gum style --faint "$(_elapsed "$t0")")"
-}
-
-MISSING=()
-track_missing() { MISSING+=("$1"); }
-
-FAILED=()
-track_failed() { FAILED+=("$1"); }
-
-# step [--stream] <label> <check_expr> <install_body>
-#   check_expr   — bash expression evaluated in current shell; exit 0 = already done
-#   install_body — shell command string; skipped in --check mode
-#
-#   Default:  gum spin with hidden output — for fast silent commands (symlinks, copies, etc.)
-#   --stream: gum spin with output captured to a temp log — for long-running or noisy
-#             installers. Shows a clean spinner; on failure prints the last 30 lines and
-#             leaves the full log in /tmp for inspection.
-step() {
-  local stream=false
-  [[ "${1:-}" == "--stream" ]] && { stream=true; shift; }
-  local label="$1" check="$2" install="$3"
-  if eval "$check" &>/dev/null 2>&1; then
-    skip "$label"
-  elif $CHECK_ONLY; then
-    fail "$label"
-    track_missing "$label"
-  else
-    local t0; t0=$(_t0)
-    if $stream; then
-      local _log
-      _log="$(mktemp /tmp/bootstrap-XXXXXX.log)"
-      if gum spin --spinner dot --title "${label}..." -- \
-           bash -c "{ $install; } >'$_log' 2>&1"; then
-        ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
-        rm -f "$_log"
-      else
-        fail "${label}  $(gum style --faint "$(_elapsed "$t0")")"
-        if [[ -s "$_log" ]]; then
-          printf '\n'
-          gum style --faint "  Last 30 lines (full log: $_log):"
-          tail -30 "$_log" | sed 's/^/    /'
-          printf '\n'
-        fi
-        rm -f "$_log"
-        track_failed "$label"
-      fi
-    else
-      if gum spin --spinner dot --title "${label}..." -- bash -c "$install"; then
-        ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
-      else
-        fail "${label}  $(gum style --faint "$(_elapsed "$t0")")"
-        track_failed "$label"
-      fi
-    fi
+_resolve_profile() {
+  DEVBOX_PROFILE="${DEVBOX_PROFILE:-}"
+  if [[ -z "$DEVBOX_PROFILE" ]] && [[ -f "$HOME/.config/devbox/profile" ]]; then
+    DEVBOX_PROFILE="$(head -1 "$HOME/.config/devbox/profile" | tr -d '\r\n')"
   fi
-}
+  DEVBOX_PROFILE="${DEVBOX_PROFILE#"${DEVBOX_PROFILE%%[![:space:]]*}"}"
+  DEVBOX_PROFILE="${DEVBOX_PROFILE%"${DEVBOX_PROFILE##*[![:space:]]}"}"
 
-# live_step <label> <hint> <check_expr> <install_body>
-#   Like step but runs the installer with its output visible — use for tools
-#   that have their own TUI or progress display (e.g. Claude Code, opencode).
-#   <hint> is shown dim on the pending line (e.g. "may take a minute").
-live_step() {
-  local label="$1" hint="$2" check="$3" install="$4"
-  if eval "$check" &>/dev/null 2>&1; then
-    skip "$label"
-  elif $CHECK_ONLY; then
-    fail "$label"
-    track_missing "$label"
-  else
-    local t0; t0=$(_t0)
-    printf "  \033[2m○\033[0m  %s \033[2m%s\033[0m\n\n" "$label" "$hint"
-    if bash -c "$install"; then
-      echo
-      ok "${label}  $(gum style --faint "$(_elapsed "$t0")")"
-    else
-      echo
-      fail "${label}  $(gum style --faint "$(_elapsed "$t0")")"
-      track_failed "$label"
-    fi
+  if [[ -z "${DEVBOX_PROFILE// }" ]]; then
+    log_error "DEVBOX_PROFILE is not set"
+    log_dim "Export DEVBOX_PROFILE=<name> or write one line to ~/.config/devbox/profile"
+    exit 1
   fi
+  case "$DEVBOX_PROFILE" in
+    */*|*..*|\ *) log_error "Invalid DEVBOX_PROFILE '${DEVBOX_PROFILE}'"; exit 1 ;;
+  esac
+
+  PROFILE_SCRIPT="$REPO_ROOT/devbox/profiles/${DEVBOX_PROFILE}"
+  if [[ ! -f "$PROFILE_SCRIPT" ]]; then
+    log_error "Profile script not found: ${PROFILE_SCRIPT}"
+    exit 1
+  fi
+
+  IDLE_TIMER_ENABLED=true
+  # shellcheck source=/dev/null
+  source "$PROFILE_SCRIPT"
+  log_ok "Profile: ${DEVBOX_PROFILE}"
 }
 
-# ---------------------------------------------------------------------------
-# Profile resolution (required — no default)
-# ---------------------------------------------------------------------------
-section "Profile"
-DEVBOX_PROFILE="${DEVBOX_PROFILE:-}"
-if [[ -z "$DEVBOX_PROFILE" ]] && [[ -f "$HOME/.config/devbox/profile" ]]; then
-  DEVBOX_PROFILE="$(head -1 "$HOME/.config/devbox/profile" | tr -d '\r\n')"
-fi
-DEVBOX_PROFILE="${DEVBOX_PROFILE#"${DEVBOX_PROFILE%%[![:space:]]*}"}"
-DEVBOX_PROFILE="${DEVBOX_PROFILE%"${DEVBOX_PROFILE##*[![:space:]]}"}"
-if [[ -z "${DEVBOX_PROFILE// }" ]]; then
-  fail "DEVBOX_PROFILE is not set"
-  echo "       Export DEVBOX_PROFILE=<name> or write one line to ~/.config/devbox/profile"
-  exit 1
-fi
-case "$DEVBOX_PROFILE" in
-  */*|*..*|\ *) fail "Invalid DEVBOX_PROFILE '${DEVBOX_PROFILE}' (no slashes, .., or spaces)"; exit 1 ;;
-esac
-PROFILE_SCRIPT="$REPO_ROOT/devbox/profiles/${DEVBOX_PROFILE}"
-if [[ ! -f "$PROFILE_SCRIPT" ]]; then
-  fail "Profile script not found: ${PROFILE_SCRIPT}"
-  exit 1
-fi
-IDLE_TIMER_ENABLED=true
-# shellcheck source=/dev/null
-source "$PROFILE_SCRIPT"
-ok "Profile: ${DEVBOX_PROFILE}"
-
-idle_timer_enabled_bool() {
+_idle_timer_enabled() {
   case "${IDLE_TIMER_ENABLED:-true}" in
     false|False|FALSE|0|no|No|off|Off) return 1 ;;
     *) return 0 ;;
@@ -194,303 +69,414 @@ idle_timer_enabled_bool() {
 }
 
 # ---------------------------------------------------------------------------
-# Homebrew
+# Shared state
 # ---------------------------------------------------------------------------
-section "Homebrew"
+FAILED=()
+_track_failed() { FAILED+=("$1"); }
 
-BREW_PREFIX="/home/linuxbrew/.linuxbrew"
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
 
-# Install Homebrew non-interactively. On Linux this also installs its system
-# dependencies (build-essential, procps, etc.) via apt automatically.
-step --stream "Homebrew" \
-  "test -x \"${BREW_PREFIX}/bin/brew\"" \
-  'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+cmd_install() {
+  log_section "Homebrew"
 
-# Source Homebrew into the current shell — the step above ran in a subshell so
-# PATH was not updated in this process.
-# shellcheck source=/dev/null
-[[ -f "${BREW_PREFIX}/bin/brew" ]] && eval "$("${BREW_PREFIX}/bin/brew" shellenv)"
+  export BREW_PREFIX="/home/linuxbrew/.linuxbrew"
 
-if ! $CHECK_ONLY; then
-  local_t0=$(_t0)
-  # Run brew bundle directly — no gum spin wrapper — so Homebrew's native
-  # progress output renders correctly. First run may take several minutes.
-  printf "  \033[2m○\033[0m  brew bundle \033[2m(first run may take several minutes)\033[0m\n\n"
-  if brew bundle install --file="$REPO_ROOT/pkgs/Brewfile"; then
-    echo
-    ok "brew bundle  $(gum style --faint "$(_elapsed "$local_t0")")"
+  if [[ ! -x "${BREW_PREFIX}/bin/brew" ]]; then
+    log_info "Installing Homebrew..."
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+      || { log_error "Homebrew install failed"; _track_failed "homebrew"; return; }
+    log_ok "Homebrew"
   else
-    # On a fresh Homebrew install, gcc can fail because its glibc dependency
-    # hasn't fully linked yet when the first bundle run starts. A single retry
-    # is enough — everything that succeeded is skipped, only failures are retried.
-    echo
-    warn "brew bundle had failures — retrying once (common on first install)..."
-    echo
-    if brew bundle install --file="$REPO_ROOT/pkgs/Brewfile"; then
-      echo
-      ok "brew bundle  $(gum style --faint "$(_elapsed "$local_t0")")"
-    else
-      echo
-      fail "brew bundle  $(gum style --faint "$(_elapsed "$local_t0")")"
-      exit 1
+    log_info "Homebrew already installed"
+  fi
+
+  # shellcheck source=/dev/null
+  [[ -f "${BREW_PREFIX}/bin/brew" ]] && eval "$("${BREW_PREFIX}/bin/brew" shellenv)"
+  export PATH="${BREW_PREFIX}/bin:$PATH"
+
+  if brew bundle check --file="$REPO_ROOT/pkgs/Brewfile" &>/dev/null; then
+    log_info "All packages already installed"
+  else
+    log_info "Running brew bundle (first run may take several minutes)..."
+    if ! brew bundle install --file="$REPO_ROOT/pkgs/Brewfile"; then
+      log_warn "brew bundle had failures — retrying once (common on first install)..."
+      if ! brew bundle install --file="$REPO_ROOT/pkgs/Brewfile"; then
+        log_error "brew bundle failed after retry"
+        _track_failed "brew bundle"
+        return
+      fi
     fi
+    log_ok "brew bundle"
   fi
-else
-  step "Homebrew packages synced" \
-    "brew bundle check --file=\"$REPO_ROOT/pkgs/Brewfile\" &>/dev/null" \
-    ""
-fi
+}
 
-# ---------------------------------------------------------------------------
-# Shell
-# ---------------------------------------------------------------------------
-section "Shell"
+cmd_link() {
+  log_section "Dotfiles"
 
-step "tmux plugin manager (TPM)" \
-  "test -d \$HOME/.tmux/plugins/tpm" \
-  "git clone https://github.com/tmux-plugins/tpm \$HOME/.tmux/plugins/tpm"
+  if [[ ! -f "$HOME/.hushlogin" ]]; then
+    touch "$HOME/.hushlogin"
+    log_ok ".hushlogin (suppress Ubuntu MOTD)"
+  else
+    log_info ".hushlogin already present"
+  fi
 
-# ---------------------------------------------------------------------------
-# Dotfiles
-# ---------------------------------------------------------------------------
-section "Dotfiles"
+  local packages="aliases atuin claude git ghostty nvim opencode starship tmux zsh"
+  local stow="${BREW_PREFIX}/bin/stow"
 
-step "~/.hushlogin (suppress Ubuntu MOTD)" \
-  "test -f \$HOME/.hushlogin" \
-  "touch \$HOME/.hushlogin"
-
-_STOW_PACKAGES="aliases atuin claude git ghostty nvim opencode starship tmux zsh"
-
-for _pkg in $_STOW_PACKAGES; do
-  step "stow $_pkg" \
-    "stow -d '$CONFIG_DIR' -n '$_pkg' -t '$HOME' 2>/dev/null" \
-    "stow -d '$CONFIG_DIR' '$_pkg' -t '$HOME' --restow"
-done
-
-# ---------------------------------------------------------------------------
-# Idle timer
-# ---------------------------------------------------------------------------
-section "Idle timer"
-if idle_timer_enabled_bool; then
-  step "devbox-idle systemd timer" \
-    "systemctl is-enabled devbox-idle.timer &>/dev/null" \
-    "sudo cp \"\$DEVBOX_DIR/bin/idle-check\" /usr/local/bin/idle-check && sudo chmod +x /usr/local/bin/idle-check && sudo cp \"\$DEVBOX_DIR/idle/devbox-idle.service\" /etc/systemd/system/devbox-idle.service && sudo cp \"\$DEVBOX_DIR/idle/devbox-idle.timer\" /etc/systemd/system/devbox-idle.timer && sudo systemctl daemon-reload && sudo systemctl enable --now devbox-idle.timer"
-else
-  if systemctl is-enabled devbox-idle.timer &>/dev/null; then
-    if $CHECK_ONLY; then
-      warn "devbox-idle timer is running but IDLE_TIMER_ENABLED=false in profile"
+  for pkg in $packages; do
+    if "$stow" -d "$CONFIG_DIR" -n "$pkg" -t "$HOME" 2>/dev/null; then
+      log_info "Linking $pkg..."
+      "$stow" -d "$CONFIG_DIR" "$pkg" -t "$HOME" --restow \
+        || { log_warn "stow $pkg failed"; _track_failed "stow $pkg"; }
     else
-      gum spin --spinner dot --title "Removing idle timer (disabled in profile)..." -- \
-        bash -c "sudo systemctl stop devbox-idle.timer 2>/dev/null; sudo systemctl disable devbox-idle.timer 2>/dev/null; sudo rm -f /etc/systemd/system/devbox-idle.timer /etc/systemd/system/devbox-idle.service /usr/local/bin/idle-check.sh; sudo systemctl daemon-reload; sudo systemctl reset-failed 2>/dev/null || true"
-      ok "idle timer removed"
+      log_info "$pkg: already linked"
     fi
-  else
-    skip "idle timer (disabled in profile)"
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# Docker
-# ---------------------------------------------------------------------------
-section "Docker"
-
-# Install Docker Engine via the official installer — this handles containerd,
-# dockerd, socket/service unit files, and full systemd integration on Ubuntu.
-step --stream "Docker Engine" \
-  "command -v docker &>/dev/null" \
-  "curl -fsSL https://get.docker.com | sh"
-
-# Ensure the daemon is enabled to start on boot AND running right now.
-# Separated from the install step so a stopped daemon is fixed on re-runs.
-step "Docker daemon running" \
-  "systemctl is-active docker &>/dev/null" \
-  "sudo systemctl enable --now docker"
-
-# Check membership before the step so we can hint about newgrp afterwards.
-_docker_needs_group=false
-getent group docker | grep -qw "$USER" 2>/dev/null || _docker_needs_group=true
-
-step "docker group membership" \
-  "getent group docker | grep -qw \"\$USER\"" \
-  "sudo usermod -aG docker \"\$USER\""
-
-if ! $CHECK_ONLY && $_docker_needs_group; then
-  warn "docker group: run 'newgrp docker' in this session, or re-login for the change to take effect"
-fi
-
-# ---------------------------------------------------------------------------
-# Rust toolchain (rustup is installed via Homebrew but is keg-only)
-# ---------------------------------------------------------------------------
-section "Rust"
-
-# Ensure the keg-only rustup binary is in PATH for this session.
-BREW_RUSTUP="${BREW_PREFIX}/opt/rustup/bin"
-[[ -d "$BREW_RUSTUP" ]] && export PATH="$BREW_RUSTUP:$PATH"
-
-step "Rust stable toolchain" \
-  "rustup toolchain list 2>/dev/null | grep -q stable" \
-  "rustup default stable"
-
-# ---------------------------------------------------------------------------
-# Node.js (via nvm — installed by Homebrew above)
-# ---------------------------------------------------------------------------
-section "Node.js"
-
-# libatomic1 is required by Node.js binaries but absent on Ubuntu 24.04 by default.
-step "libatomic1 (Node.js dependency)" \
-  "dpkg -s libatomic1 &>/dev/null" \
-  "sudo apt-get install -y libatomic1"
-
-# Source nvm into the current shell so the nvm command is available below.
-# nvm itself is installed via Homebrew; its script lives in the Homebrew prefix.
-# shellcheck source=/dev/null
-export NVM_DIR="$HOME/.nvm"
-[[ -s "${BREW_PREFIX}/opt/nvm/nvm.sh" ]] && source "${BREW_PREFIX}/opt/nvm/nvm.sh"
-
-step "Node.js (stable)" \
-  "node --version &>/dev/null" \
-  "export NVM_DIR=\"\$HOME/.nvm\" && source '${BREW_PREFIX}/opt/nvm/nvm.sh' && nvm install stable && nvm alias default stable"
-
-# ---------------------------------------------------------------------------
-# Coding tools
-# ---------------------------------------------------------------------------
-section "Coding tools"
-live_step "claude code" "(may take a minute)" \
-  "command -v claude" \
-  "curl -fsSL https://claude.ai/install.sh | bash"
-
-step "superpowers plugin (claude code)" \
-  "test -d \"\$HOME/.claude/plugins/superpowers\"" \
-  "claude plugin install superpowers@claude-plugins-official"
-
-step "impeccable plugin (claude code)" \
-  "test -d \"\$HOME/.claude/plugins/impeccable\"" \
-  "claude plugin install impeccable@impeccable"
-
-live_step "opencode" "(may take a minute)" \
-  "command -v opencode" \
-  "curl -fsSL https://opencode.ai/install | bash"
-
-if ! $CHECK_ONLY; then
-  timed_spin "Seeding tealdeer page cache" bash -c 'tldr --update >/dev/null 2>&1 || true'
-  timed_spin "Importing atuin history"     bash -c 'atuin import auto 2>/dev/null || true'
-fi
-
-# ---------------------------------------------------------------------------
-# Workspace repos
-# ---------------------------------------------------------------------------
-section "Workspace repos"
-
-# Fetch repo list from GCE instance metadata (set by Terraform from the profile).
-_REPOS_RAW=$(curl -sf \
-  --connect-timeout 5 \
-  -H "Metadata-Flavor: Google" \
-  "http://metadata.google.internal/computeMetadata/v1/instance/attributes/devbox-repos" \
-  2>/dev/null || true)
-
-if [[ -z "$_REPOS_RAW" ]]; then
-  skip "workspace repos (none configured in profile)"
-else
-  if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
-    warn "SSH agent not forwarded — private repo clones may fail (reconnect with ssh -A)"
-  fi
-  if ! $CHECK_ONLY; then
-    mkdir -p "$HOME/workspace"
-  fi
-  while IFS= read -r _repo_url; do
-    [[ -z "$_repo_url" ]] && continue
-    _repo_name=$(basename "$_repo_url" .git)
-    _repo_dest="$HOME/workspace/$_repo_name"
-    step "$_repo_name" \
-      "test -d '$_repo_dest'" \
-      "git clone '$_repo_url' '$_repo_dest'"
-  done <<< "$_REPOS_RAW"
-fi
-
-# ---------------------------------------------------------------------------
-# Tailscale
-# ---------------------------------------------------------------------------
-section "Tailscale"
-
-step --stream "Tailscale" \
-  "command -v tailscale" \
-  "curl -fsSL https://tailscale.com/install.sh | sh"
-
-# Read the auth key from secrets.env if not already in the environment.
-if [[ -z "${TAILSCALE_AUTH_KEY:-}" ]] && [[ -s "$HOME/.config/secrets.env" ]]; then
-  TAILSCALE_AUTH_KEY=$(grep -m1 '^TAILSCALE_AUTH_KEY=' "$HOME/.config/secrets.env" | cut -d= -f2-)
-fi
-
-if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
-  step "Tailscale authenticated" \
-    "tailscale status --peers=false &>/dev/null" \
-    "timeout 60 sudo tailscale up --authkey \"\$TAILSCALE_AUTH_KEY\" --ssh"
-else
-  if $CHECK_ONLY; then
-    warn "Tailscale: TAILSCALE_AUTH_KEY not set — skipping auth"
-  else
-    warn "TAILSCALE_AUTH_KEY not set in secrets.env — Tailscale installed but not authenticated"
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# Secrets
-# ---------------------------------------------------------------------------
-section "Secrets"
-if [[ -s "$HOME/.config/secrets.env" ]]; then
-  mapfile -t _SECRET_VARS < <(grep -oP '^(export\s+)?\K[A-Z_][A-Z0-9_]+(?==)' "$HOME/.config/secrets.env" 2>/dev/null || true)
-  ok "~/.config/secrets.env (${#_SECRET_VARS[@]} vars)"
-  for _var in "${_SECRET_VARS[@]}"; do
-    printf "  $(gum style --foreground 240 '  ·  %s')\n" "$_var"
   done
-else
-  if $CHECK_ONLY; then
-    fail "~/.config/secrets.env (missing or empty — run bin/start to copy your .env file)"
-    track_missing "secrets"
+
+  log_ok "Dotfiles linked"
+}
+
+cmd_langs() {
+  log_section "Languages"
+
+  # rustup is keg-only — add its bin dir to PATH before the rust lang file runs.
+  local brew_rustup="${BREW_PREFIX}/opt/rustup/bin"
+  [[ -d "$brew_rustup" ]] && export PATH="$brew_rustup:$PATH"
+
+  for script in "$REPO_ROOT/pkgs/lang"/*; do
+    [[ -f "$script" ]] || continue
+    local name
+    name="$(basename "$script")"
+    log_info "$name..."
+    # shellcheck source=/dev/null
+    source "$script" || { log_warn "$name failed"; _track_failed "lang/$name"; }
+  done
+}
+
+cmd_tools() {
+  log_section "Tools"
+
+  # tmux plugin manager
+  if [[ -d "$HOME/.tmux/plugins/tpm" ]]; then
+    log_info "tmux plugin manager: already installed"
   else
-    warn "~/.config/secrets.env not found — run bin/start to copy your profile .env file"
+    log_info "tmux plugin manager: installing..."
+    git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" \
+      && log_ok "tmux plugin manager" \
+      || { log_warn "tpm install failed"; _track_failed "tpm"; }
   fi
-fi
 
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
-TOTAL_ELAPSED=$(_elapsed "$BOOTSTRAP_T0")
-
-if $CHECK_ONLY; then
-  if [[ ${#MISSING[@]} -eq 0 ]]; then
-    echo
-    gum style --border rounded --padding "1 2" --border-foreground 46 \
-      "$(gum style --foreground 46 --bold '✓  All components installed')"
-    echo
+  # claude code
+  if command -v claude &>/dev/null; then
+    log_info "claude code: already installed"
   else
-    echo
-    gum style --border rounded --padding "1 2" --border-foreground 202 \
-      "$(gum style --foreground 202 --bold "✗  ${#MISSING[@]} component(s) missing:")" \
-      "" \
-      "$(printf '  %s\n' "${MISSING[@]}")" \
-      "" \
-      "$(gum style --foreground 240 'Run bootstrap without --check to install.')"
-    echo
+    log_info "claude code: installing (may take a minute)..."
+    curl -fsSL https://claude.ai/install.sh | bash \
+      && log_ok "claude code" \
+      || { log_warn "claude code install failed"; _track_failed "claude code"; }
+  fi
+
+  if [[ ! -d "$HOME/.claude/plugins/superpowers" ]]; then
+    log_info "claude superpowers plugin: installing..."
+    claude plugin install superpowers@claude-plugins-official \
+      && log_ok "superpowers plugin" \
+      || { log_warn "superpowers plugin failed"; _track_failed "superpowers plugin"; }
+  else
+    log_info "claude superpowers plugin: already installed"
+  fi
+
+  if [[ ! -d "$HOME/.claude/plugins/impeccable" ]]; then
+    log_info "claude impeccable plugin: installing..."
+    claude plugin install impeccable@impeccable \
+      && log_ok "impeccable plugin" \
+      || { log_warn "impeccable plugin failed"; _track_failed "impeccable plugin"; }
+  else
+    log_info "claude impeccable plugin: already installed"
+  fi
+
+  # opencode
+  if command -v opencode &>/dev/null; then
+    log_info "opencode: already installed"
+  else
+    log_info "opencode: installing (may take a minute)..."
+    curl -fsSL https://opencode.ai/install | bash \
+      && log_ok "opencode" \
+      || { log_warn "opencode install failed"; _track_failed "opencode"; }
+  fi
+
+  log_info "Seeding tealdeer page cache..."
+  tldr --update >/dev/null 2>&1 || true
+
+  log_info "Importing atuin history..."
+  atuin import auto 2>/dev/null || true
+
+  log_ok "Tools"
+}
+
+cmd_docker() {
+  log_section "Docker"
+
+  if command -v docker &>/dev/null; then
+    log_info "Docker Engine: already installed"
+  else
+    log_info "Docker Engine: installing..."
+    curl -fsSL https://get.docker.com | sh \
+      && log_ok "Docker Engine" \
+      || { log_warn "Docker install failed"; _track_failed "docker"; return; }
+  fi
+
+  if systemctl is-active docker &>/dev/null; then
+    log_info "Docker daemon: already running"
+  else
+    log_info "Docker daemon: enabling..."
+    sudo systemctl enable --now docker \
+      && log_ok "Docker daemon running" \
+      || { log_warn "Docker daemon failed to start"; _track_failed "docker daemon"; }
+  fi
+
+  if getent group docker | grep -qw "$USER" 2>/dev/null; then
+    log_info "docker group: already a member"
+  else
+    log_info "docker group: adding $USER..."
+    sudo usermod -aG docker "$USER" \
+      && log_ok "docker group membership" \
+      || { log_warn "docker group failed"; _track_failed "docker group"; }
+    log_warn "docker group: run 'newgrp docker' or re-login for the change to take effect"
+  fi
+}
+
+cmd_idle() {
+  log_section "Idle timer"
+
+  if _idle_timer_enabled; then
+    if systemctl is-enabled devbox-idle.timer &>/dev/null; then
+      log_info "devbox-idle timer: already enabled"
+    else
+      log_info "devbox-idle timer: installing..."
+      sudo cp "$DEVBOX_DIR/bin/idle-check" /usr/local/bin/idle-check
+      sudo chmod +x /usr/local/bin/idle-check
+      sudo cp "$DEVBOX_DIR/idle/devbox-idle.service" /etc/systemd/system/devbox-idle.service
+      sudo cp "$DEVBOX_DIR/idle/devbox-idle.timer"   /etc/systemd/system/devbox-idle.timer
+      sudo systemctl daemon-reload
+      sudo systemctl enable --now devbox-idle.timer \
+        && log_ok "devbox-idle timer enabled" \
+        || { log_warn "devbox-idle timer failed"; _track_failed "idle timer"; }
+    fi
+  else
+    if systemctl is-enabled devbox-idle.timer &>/dev/null; then
+      log_info "Removing idle timer (disabled in profile)..."
+      sudo systemctl stop devbox-idle.timer 2>/dev/null || true
+      sudo systemctl disable devbox-idle.timer 2>/dev/null || true
+      sudo rm -f /etc/systemd/system/devbox-idle.timer \
+                 /etc/systemd/system/devbox-idle.service \
+                 /usr/local/bin/idle-check
+      sudo systemctl daemon-reload
+      sudo systemctl reset-failed 2>/dev/null || true
+      log_ok "idle timer removed"
+    else
+      log_info "idle timer: disabled in profile"
+    fi
+  fi
+}
+
+cmd_repos() {
+  log_section "Workspace repos"
+
+  local repos_raw
+  repos_raw=$(curl -sf \
+    --connect-timeout 5 \
+    -H "Metadata-Flavor: Google" \
+    "http://metadata.google.internal/computeMetadata/v1/instance/attributes/devbox-repos" \
+    2>/dev/null || true)
+
+  if [[ -z "$repos_raw" ]]; then
+    log_info "No repos configured in profile"
+    return
+  fi
+
+  if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+    log_warn "SSH agent not forwarded — private repo clones may fail (reconnect with ssh -A)"
+  fi
+
+  mkdir -p "$HOME/workspace"
+
+  while IFS= read -r repo_url; do
+    [[ -z "$repo_url" ]] && continue
+    local repo_name repo_dest
+    repo_name=$(basename "$repo_url" .git)
+    repo_dest="$HOME/workspace/$repo_name"
+    if [[ -d "$repo_dest" ]]; then
+      log_info "$repo_name: already cloned"
+    else
+      log_info "$repo_name: cloning..."
+      git clone "$repo_url" "$repo_dest" \
+        && log_ok "$repo_name" \
+        || { log_warn "$repo_name clone failed"; _track_failed "repo/$repo_name"; }
+    fi
+  done <<< "$repos_raw"
+}
+
+cmd_check() {
+  log_banner "bootstrap check"
+
+  local missing=()
+
+  _chk() {
+    local label="$1" result="$2"
+    if [[ "$result" == "ok" ]]; then
+      log_ok "$label"
+    else
+      log_error "$label"
+      missing+=("$label")
+    fi
+  }
+
+  log_section "Homebrew"
+  [[ -x "${BREW_PREFIX}/bin/brew" ]] \
+    && _chk "Homebrew" ok || _chk "Homebrew" fail
+  brew bundle check --file="$REPO_ROOT/pkgs/Brewfile" &>/dev/null \
+    && _chk "brew bundle" ok || _chk "brew bundle" fail
+
+  log_section "Dotfiles"
+  [[ -f "$HOME/.hushlogin" ]] \
+    && _chk ".hushlogin" ok || _chk ".hushlogin" fail
+  local stow="${BREW_PREFIX}/bin/stow"
+  for pkg in aliases atuin claude git ghostty nvim opencode starship tmux zsh; do
+    "$stow" -d "$CONFIG_DIR" -n "$pkg" -t "$HOME" &>/dev/null \
+      && _chk "stow $pkg" ok || _chk "stow $pkg (already linked)" ok
+  done
+
+  log_section "Languages"
+  command -v rustc   &>/dev/null && _chk "rust"   ok || _chk "rust"   fail
+  command -v node    &>/dev/null && _chk "node"   ok || _chk "node"   fail
+  command -v go      &>/dev/null && _chk "go"     ok || _chk "go"     fail
+  command -v python3 &>/dev/null && _chk "python" ok || _chk "python" fail
+
+  log_section "Tools"
+  [[ -d "$HOME/.tmux/plugins/tpm" ]]  && _chk "tpm"      ok || _chk "tpm"      fail
+  command -v claude   &>/dev/null      && _chk "claude"   ok || _chk "claude"   fail
+  command -v opencode &>/dev/null      && _chk "opencode" ok || _chk "opencode" fail
+
+  log_section "Docker"
+  command -v docker &>/dev/null                          && _chk "docker installed" ok || _chk "docker installed" fail
+  systemctl is-active docker &>/dev/null                 && _chk "docker running"   ok || _chk "docker running"   fail
+  getent group docker | grep -qw "$USER" 2>/dev/null     && _chk "docker group"     ok || _chk "docker group"     fail
+
+  log_section "Idle timer"
+  if _idle_timer_enabled; then
+    systemctl is-enabled devbox-idle.timer &>/dev/null \
+      && _chk "devbox-idle timer" ok || _chk "devbox-idle timer" fail
+  else
+    log_info "idle timer disabled in profile"
+  fi
+
+  log_section "Secrets"
+  [[ -s "$HOME/.config/secrets.env" ]] \
+    && _chk "~/.config/secrets.env" ok || _chk "~/.config/secrets.env" fail
+
+  echo
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    log_ok "All components installed"
+  else
+    log_error "${#missing[@]} component(s) missing — run: bootstrap"
     exit 1
   fi
-else
+}
+
+cmd_all() {
+  log_banner "bootstrap"
+  _resolve_profile
+  cmd_install
+  cmd_link
+  cmd_langs
+  cmd_tools
+  cmd_docker
+  cmd_idle
+  cmd_repos
+  _secrets_check
+  _summary
+}
+
+cmd_help() {
+  cat <<EOF
+
+  bootstrap — provision a fresh devbox VM
+
+  Usage: bootstrap [command]
+
+  Commands:
+    all      Run everything  (default)
+    install  Homebrew + brew bundle
+    link     Stow dotfiles + .hushlogin
+    langs    Language toolchains via pkgs/lang/*
+    tools    Claude code, opencode, TPM, atuin, tldr
+    docker   Docker Engine + daemon + group membership
+    idle     Systemd idle timer
+    repos    Clone workspace repos from GCE metadata
+    check    Print status without modifying anything
+    help     Show this message
+
+EOF
+}
+
+_secrets_check() {
+  log_section "Secrets"
+  if [[ -s "$HOME/.config/secrets.env" ]]; then
+    local vars
+    mapfile -t vars < <(grep -oP '^(export\s+)?\K[A-Z_][A-Z0-9_]+(?==)' \
+      "$HOME/.config/secrets.env" 2>/dev/null || true)
+    log_ok "~/.config/secrets.env (${#vars[@]} vars)"
+    for v in "${vars[@]}"; do log_dim "  · $v"; done
+  else
+    log_warn "~/.config/secrets.env not found — run bin/start to copy your profile .env file"
+  fi
+}
+
+_summary() {
   echo
   if [[ ${#FAILED[@]} -eq 0 ]]; then
-    gum style --border rounded --padding "1 2" --border-foreground 46 \
-      "$(gum style --foreground 46 --bold '✓  Bootstrap complete')" \
-      "" \
-      "$(gum style --foreground 240 "Completed in ${TOTAL_ELAPSED}.")" \
-      "$(gum style --foreground 240 'Log out and back in for shell changes to take effect.')" \
-      "$(gum style --foreground 240 "You will auto-attach to a tmux session named 'main' on login.")"
+    log_ok "Bootstrap complete — log out and back in for shell changes to take effect"
   else
-    gum style --border rounded --padding "1 2" --border-foreground 214 \
-      "$(gum style --foreground 214 --bold "⚠  Bootstrap complete with ${#FAILED[@]} failure(s)")" \
-      "" \
-      "$(printf '  · %s\n' "${FAILED[@]}")" \
-      "" \
-      "$(gum style --foreground 240 "Completed in ${TOTAL_ELAPSED}.")" \
-      "$(gum style --foreground 240 'Run bootstrap again to retry failed steps.')"
+    log_warn "Bootstrap complete with ${#FAILED[@]} failure(s):"
+    for f in "${FAILED[@]}"; do log_dim "  · $f"; done
+    log_dim "Re-run bootstrap to retry."
   fi
   echo
-fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+  local cmd="${1:-all}"
+  shift || true
+
+  # Subcommands that need the profile resolved first
+  case "$cmd" in
+    all|install|link|langs|tools|docker|idle|repos)
+      _resolve_profile
+      ;;
+  esac
+
+  case "$cmd" in
+    all)     cmd_all ;;
+    install) log_banner "bootstrap install"; cmd_install; _summary ;;
+    link)    log_banner "bootstrap link";    cmd_link;    _summary ;;
+    langs)   log_banner "bootstrap langs";   cmd_langs;   _summary ;;
+    tools)   log_banner "bootstrap tools";   cmd_tools;   _summary ;;
+    docker)  log_banner "bootstrap docker";  cmd_docker;  _summary ;;
+    idle)    log_banner "bootstrap idle";    cmd_idle;    _summary ;;
+    repos)   log_banner "bootstrap repos";   cmd_repos;   _summary ;;
+    check)   _resolve_profile; cmd_check ;;
+    help|--help|-h) cmd_help ;;
+    *)
+      log_error "Unknown command: $cmd"
+      cmd_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

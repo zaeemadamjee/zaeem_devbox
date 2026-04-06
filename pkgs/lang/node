@@ -13,6 +13,17 @@ if [[ ! -s "$_NVM_SH" ]]; then
   exit 1
 fi
 
+# libatomic1 is required by Node.js binaries on Ubuntu 24.04 but not present by default.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  if dpkg -s libatomic1 &>/dev/null 2>&1; then
+    log_info "libatomic1 already installed"
+  else
+    log_info "Installing libatomic1 (Node.js dependency)..."
+    sudo apt-get install -y libatomic1
+    log_ok "libatomic1"
+  fi
+fi
+
 # shellcheck source=/dev/null
 source "$_NVM_SH"
 

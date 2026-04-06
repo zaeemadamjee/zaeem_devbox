@@ -68,3 +68,4 @@ brew "zellij"          # terminal workspace
 # ---------------------------------------------------------------------------
 brew "starship"
 brew "atuin"           # shell history
+brew "neofetch"        # system info on login

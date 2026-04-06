@@ -1,101 +1,69 @@
 #!/usr/bin/env bash
-# welcome.sh — shown on every interactive SSH login.
-# Sourced from ~/.zshrc (outside tmux only) and from the pre-bootstrap stub.
+# welcome — shown on every interactive SSH login.
+# Sourced from ~/.zshrc (outside tmux only).
 # WELCOME_SHOWN=1 is exported to prevent re-display after exec zsh.
 
 export WELCOME_SHOWN=1
 
 REPO="$HOME/zaeem_devbox"
+
+# shellcheck source=../../lib/log.sh
+source "$REPO/lib/log.sh"
+
 PROFILE="${DEVBOX_PROFILE:-$(head -1 "$HOME/.config/devbox/profile" 2>/dev/null | tr -d '\r\n' || echo '?')}"
 BOOTSTRAPPED=false
 [[ -f "$HOME/.bootstrap-complete" ]] && BOOTSTRAPPED=true
 
 # ---------------------------------------------------------------------------
-# Machine info
+# System info via neofetch
 # ---------------------------------------------------------------------------
-_machine_os()     { lsb_release -ds 2>/dev/null || grep -oP '(?<=PRETTY_NAME=").*(?=")' /etc/os-release 2>/dev/null || uname -rs; }
-_machine_cpu()    {
-  local count model ghz
-  count="$(nproc 2>/dev/null || echo '?')"
-  model="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | xargs || true)"
-  ghz="$(echo "$model" | grep -oP '[\d.]+(?=GHz)' || true)"
-  if [[ -n "$ghz" ]]; then echo "${count} vCPUs @ ${ghz}GHz"
-  else echo "${count} vCPUs"; fi
-}
-_machine_mem()    { free -h 2>/dev/null | awk '/^Mem:/{print $2 " total, " $7 " available"}' || echo '?'; }
-_machine_disk()   { df -h / 2>/dev/null | awk 'NR==2{print $3 " / " $2 " (" $5 " used)"}' || echo '?'; }
-_machine_uptime() { uptime -p 2>/dev/null | sed 's/^up //' || echo '?'; }
-
-# ---------------------------------------------------------------------------
-_run_bootstrap() {
-  if bash "$REPO/devbox/bin/bootstrap"; then
-    touch "$HOME/.bootstrap-complete"
-    BOOTSTRAPPED=true
-    echo ""
-    exec zsh  # WELCOME_SHOWN=1 is exported, so the new shell skips the welcome screen
-  fi
-}
-
-if ! command -v gum &>/dev/null; then
-  echo ""
-  echo "  ✗  gum is not installed — it should have been installed by Terraform's startup-script."
-  echo "     Check /var/log/startup-script.log for errors."
-  echo ""
-  echo "     To install manually: sudo apt-get install -y gum"
-  echo "     Then reconnect."
-  echo ""
-  return 1 2>/dev/null || exit 1
+if command -v neofetch &>/dev/null; then
+  neofetch
+else
+  log_warn "neofetch not installed — run: bootstrap install"
 fi
 
+# ---------------------------------------------------------------------------
+# Bootstrap status
+# ---------------------------------------------------------------------------
+log_section "devbox"
+log_info "Profile:    $PROFILE"
+
 if $BOOTSTRAPPED; then
-  _bootstrap_status="$(gum style --foreground 46 '✓ complete')"
+  log_ok "Bootstrap: complete"
 else
-  _bootstrap_status="$(gum style --foreground 202 '✗ not run')"
+  log_warn "Bootstrap: not run"
 fi
 
 echo
-gum style \
-  --border rounded \
-  --border-foreground 99 \
-  --padding "1 3" \
-  --margin "0 1" \
-  "$(gum style --bold --foreground 212 '⬡  zaeem devbox')" \
-  "" \
-  "Profile     $(gum style --foreground 99 "$PROFILE")" \
-  "Bootstrap   $_bootstrap_status" \
-  "" \
-  "OS          $(gum style --foreground 244 "$(_machine_os)")" \
-  "CPU         $(gum style --foreground 244 "$(_machine_cpu)")" \
-  "Memory      $(gum style --foreground 244 "$(_machine_mem)")" \
-  "Disk        $(gum style --foreground 244 "$(_machine_disk)")" \
-  "Uptime      $(gum style --foreground 244 "$(_machine_uptime)")"
-echo
 
-if $BOOTSTRAPPED; then
-  bash "$REPO/devbox/bin/bootstrap" --check || true
-  echo
-else
-  if gum confirm --default=yes \
-      --prompt.foreground 212 \
-      --selected.background 99 \
-      "Run bootstrap now?"; then
+# ---------------------------------------------------------------------------
+# If not bootstrapped — offer to run it now
+# ---------------------------------------------------------------------------
+if ! $BOOTSTRAPPED; then
+  printf "  Run bootstrap now? [Y/n]: "
+  read -r _answer
+  if [[ "$_answer" != "n" && "$_answer" != "N" ]]; then
     echo
-    _run_bootstrap
+    if bash "$REPO/devbox/bin/bootstrap"; then
+      touch "$HOME/.bootstrap-complete"
+      echo
+      exec zsh
+    fi
   else
-    echo
-    gum style --foreground 240 \
-      "Run any time:      bootstrap" \
-      "Check status only: bootstrap --check"
+    log_dim "Run any time:      bootstrap"
+    log_dim "Check status only: bootstrap check"
     echo
   fi
+else
+  # Already bootstrapped — show a quick health check
+  bash "$REPO/devbox/bin/bootstrap" check || true
+  echo
 fi
 
-# --- Attach to tmux ---
+# ---------------------------------------------------------------------------
+# Attach to tmux
+# ---------------------------------------------------------------------------
 if [[ -z "$TMUX" ]] && [[ -t 0 ]] && command -v tmux &>/dev/null; then
-  if gum confirm --default=yes \
-      --prompt.foreground 212 \
-      --selected.background 99 \
-      "Attach to tmux session 'main'?"; then
-    exec tmux new-session -A -s main
-  fi
+  exec tmux new-session -A -s main
 fi
