@@ -20,12 +20,10 @@ brew "tmux"
 brew "stow"            # dotfile symlink manager
 
 # ---------------------------------------------------------------------------
-# Languages
+# Language managers (runtimes installed by pkgs/lang/* scripts)
 # ---------------------------------------------------------------------------
-brew "python@3.12"
-brew "go"
-brew "rustup"          # manages Rust toolchain; run `rustup default stable` once
-brew "nvm"             # Node version manager; run `nvm install 22` once (handled by bootstrap)
+brew "rustup"          # Rust toolchain manager; pkgs/lang/rust handles `rustup default stable`
+brew "nvm"             # Node version manager; pkgs/lang/node handles `nvm install stable`
 
 # ---------------------------------------------------------------------------
 # Core CLI utilities

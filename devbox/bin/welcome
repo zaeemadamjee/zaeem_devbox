@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # welcome — shown on every interactive SSH login.
 # Sourced from ~/.zshrc (outside tmux only).
-# WELCOME_SHOWN=1 is exported to prevent re-display after exec zsh.
+# WELCOME_SHOWN=1 is exported to prevent re-display if .zshrc is re-sourced.
 
 export WELCOME_SHOWN=1
 
@@ -48,7 +48,11 @@ if ! $BOOTSTRAPPED; then
     if bash "$REPO/devbox/bin/bootstrap"; then
       touch "$HOME/.bootstrap-complete"
       echo
-      exec zsh
+      # Refresh PATH to pick up Homebrew (just installed by bootstrap),
+      # then go straight into tmux so the tmux shell fully sources .zshrc.
+      _brew_prefix="/home/linuxbrew/.linuxbrew"
+      [[ -f "${_brew_prefix}/bin/brew" ]] && eval "$("${_brew_prefix}/bin/brew" shellenv)"
+      exec tmux new-session -A -s main
     fi
   else
     log_dim "Run any time:      bootstrap"

@@ -84,10 +84,19 @@ cmd_install() {
   export BREW_PREFIX="/home/linuxbrew/.linuxbrew"
 
   if [[ ! -x "${BREW_PREFIX}/bin/brew" ]]; then
-    log_info "Installing Homebrew..."
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
-      || { log_error "Homebrew install failed"; _track_failed "homebrew"; return; }
-    log_ok "Homebrew"
+    log_info "Installing Homebrew (this takes a minute)..."
+    local _brew_log
+    _brew_log="$(mktemp)"
+    if NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+        >"$_brew_log" 2>&1; then
+      log_ok "Homebrew"
+    else
+      log_error "Homebrew install failed — see log: $_brew_log"
+      cat "$_brew_log" >&2
+      _track_failed "homebrew"
+      return
+    fi
+    rm -f "$_brew_log"
   else
     log_info "Homebrew already installed"
   fi
@@ -178,24 +187,6 @@ cmd_tools() {
       || { log_warn "claude code install failed"; _track_failed "claude code"; }
   fi
 
-  if [[ ! -d "$HOME/.claude/plugins/superpowers" ]]; then
-    log_info "claude superpowers plugin: installing..."
-    claude plugin install superpowers@claude-plugins-official \
-      && log_ok "superpowers plugin" \
-      || { log_warn "superpowers plugin failed"; _track_failed "superpowers plugin"; }
-  else
-    log_info "claude superpowers plugin: already installed"
-  fi
-
-  if [[ ! -d "$HOME/.claude/plugins/impeccable" ]]; then
-    log_info "claude impeccable plugin: installing..."
-    claude plugin install impeccable@impeccable \
-      && log_ok "impeccable plugin" \
-      || { log_warn "impeccable plugin failed"; _track_failed "impeccable plugin"; }
-  else
-    log_info "claude impeccable plugin: already installed"
-  fi
-
   # opencode
   if command -v opencode &>/dev/null; then
     log_info "opencode: already installed"
@@ -221,10 +212,18 @@ cmd_docker() {
   if command -v docker &>/dev/null; then
     log_info "Docker Engine: already installed"
   else
-    log_info "Docker Engine: installing..."
-    curl -fsSL https://get.docker.com | sh \
-      && log_ok "Docker Engine" \
-      || { log_warn "Docker install failed"; _track_failed "docker"; return; }
+    log_info "Docker Engine: installing (this takes a minute)..."
+    local _docker_log
+    _docker_log="$(mktemp)"
+    if curl -fsSL https://get.docker.com | sh >"$_docker_log" 2>&1; then
+      log_ok "Docker Engine"
+    else
+      log_warn "Docker install failed — see log: $_docker_log"
+      cat "$_docker_log" >&2
+      _track_failed "docker"
+      return
+    fi
+    rm -f "$_docker_log"
   fi
 
   if systemctl is-active docker &>/dev/null; then
@@ -387,7 +386,6 @@ cmd_check() {
 
 cmd_all() {
   log_banner "bootstrap"
-  _resolve_profile
   cmd_install
   cmd_link
   cmd_langs

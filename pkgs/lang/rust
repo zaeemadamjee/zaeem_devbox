@@ -10,6 +10,12 @@ else
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 
+# Ensure a default toolchain is set before sourcing .cargo/env (required on first run)
+if ! rustup toolchain list 2>/dev/null | grep -q stable; then
+  log_info "Setting Rust default toolchain to stable..."
+  rustup default stable
+fi
+
 . "$HOME/.cargo/env"
 
 log_ok "Rust $(rustc --version | cut -d' ' -f2)"
