@@ -45,4 +45,11 @@ echo
 terraform apply -var-file="$TMPVARS"
 
 log_banner "$GCP_INSTANCE_NAME recreated"
-log_dim "Next:  ./bin/start --profile $PROFILE_NAME"
+echo
+printf "  Start %s now? [Y/n]: " "$GCP_INSTANCE_NAME"
+read -r _start
+if [[ "$_start" != "n" && "$_start" != "N" ]]; then
+  exec "$BIN_DIR/start" "$PROFILE_NAME"
+else
+  log_dim "Run when ready:  ./bin/start $PROFILE_NAME"
+fi
