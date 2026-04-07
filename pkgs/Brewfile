@@ -79,3 +79,6 @@ else
   tap "google/cloud-sdk"
   brew "google-cloud-sdk"
 end
+
+tap "hashicorp/tap"
+brew "hashicorp/tap/terraform"

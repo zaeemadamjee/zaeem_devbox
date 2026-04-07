@@ -175,7 +175,7 @@ SSH_CONFIG
       cat > /home/zaeem/.zshrc <<'ZSHRC'
 # Pre-bootstrap stub — replaced by devbox/bin/bootstrap (stow zsh) with the real config/zsh/.zshrc symlink.
 if [[ ! -f "$HOME/.bootstrap-complete" ]]; then
-  REPO="$HOME/zaeem_devbox"
+  REPO="$HOME/zaeem"
 
   # Ensure GitHub host key is trusted on every login (idempotent).
   # StrictHostKeyChecking=accept-new: auto-accepts new keys, rejects changed ones.
@@ -189,13 +189,13 @@ if [[ ! -f "$HOME/.bootstrap-complete" ]]; then
   if [[ ! -d "$REPO" ]]; then
     if [[ -z "$${SSH_AUTH_SOCK:-}" ]]; then
       echo ""
-      echo "  SSH agent required to clone zaeem_devbox."
-      echo "  Load your key locally:  ssh-add ~/.ssh/zaeem_devbox"
+      echo "  SSH agent required to clone zaeem."
+      echo "  Load your key locally:  ssh-add ~/.ssh/zaeem"
       echo "  Then reconnect with:    ssh -A <devbox>"
       echo ""
     else
-      echo "  Cloning zaeem_devbox..."
-      timeout 60 git clone git@github.com:zaeemadamjee/zaeem_devbox.git "$REPO"
+      echo "  Cloning zaeem..."
+      timeout 60 git clone git@github.com:zaeemadamjee/zaeem.git "$REPO"
     fi
   fi
   [[ -f "$REPO/devbox/bin/welcome" ]] && source "$REPO/devbox/bin/welcome"

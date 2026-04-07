@@ -7,7 +7,7 @@
 #   all      Run install + link + shell + langs + tools  (default)
 #   install  Run brew bundle from pkgs/Brewfile
 #   link     Stow config packages into ~ (dotfiles)
-#   shell    Write ~/.config/zaeem_devbox/shell.zsh and source it from ~/.zshrc
+#   shell    Write ~/.config/zaeem/shell.zsh and source it from ~/.zshrc
 #   langs    Install language toolchains (sourced from pkgs/lang/*)
 #   tools    Install coding tools (claude code, opencode, TPM)
 #   check    Print status of all components without modifying anything
@@ -126,7 +126,7 @@ cmd_link() {
 cmd_shell() {
   log_section "Shell"
 
-  local managed_dir="$HOME/.config/zaeem_devbox"
+  local managed_dir="$HOME/.config/zaeem"
   local managed_file="$managed_dir/shell.zsh"
   local zshrc="$HOME/.zshrc"
 
@@ -185,14 +185,14 @@ if [[ -f "$HOME/.config/secrets.env" ]]; then
 fi
 SHELL_INIT
 
-  log_ok "~/.config/zaeem_devbox/shell.zsh"
+  log_ok "~/.config/zaeem/shell.zsh"
 
   # Add source line to ~/.zshrc exactly once.
   touch "$zshrc"
   if grep -qF "source \"${managed_file}\"" "$zshrc" 2>/dev/null; then
     log_info "~/.zshrc: source line already present"
   else
-    printf '\n# zaeem_devbox — added by setup-mac\nsource "%s"\n' "$managed_file" >> "$zshrc"
+    printf '\n# zaeem — added by setup-mac\nsource "%s"\n' "$managed_file" >> "$zshrc"
     log_ok "~/.zshrc updated"
   fi
 }
@@ -306,9 +306,9 @@ cmd_check() {
   done
 
   log_section "Shell"
-  local managed_file="$HOME/.config/zaeem_devbox/shell.zsh"
+  local managed_file="$HOME/.config/zaeem/shell.zsh"
   [[ -f "$managed_file" ]] \
-    && _chk "~/.config/zaeem_devbox/shell.zsh" ok || _chk "~/.config/zaeem_devbox/shell.zsh" fail
+    && _chk "~/.config/zaeem/shell.zsh" ok || _chk "~/.config/zaeem/shell.zsh" fail
   grep -qF "source \"${managed_file}\"" "$HOME/.zshrc" 2>/dev/null \
     && _chk "~/.zshrc source line" ok || _chk "~/.zshrc source line" fail
 
@@ -354,7 +354,7 @@ cmd_help() {
     all      Run install + link + shell + langs + tools  (default)
     install  Run brew bundle from pkgs/Brewfile
     link     Stow config packages into ~ (dotfiles)
-    shell    Write ~/.config/zaeem_devbox/shell.zsh and source it from ~/.zshrc
+    shell    Write ~/.config/zaeem/shell.zsh and source it from ~/.zshrc
     langs    Install language toolchains (pkgs/lang/*)
     tools    Install coding tools (claude, opencode, TPM)
     check    Print status of all components without modifying anything

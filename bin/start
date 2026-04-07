@@ -17,7 +17,7 @@ check_gcp_project
 check_gcloud_auth
 resolve_instance_zone
 
-SSH_KEY="$HOME/.ssh/zaeem_devbox"
+SSH_KEY="$HOME/.ssh/zaeem"
 SSH_USER="zaeem"
 SSH_CONFIG="$HOME/.ssh/config"
 SSH_HOST="devbox-${PROFILE_NAME}"
@@ -28,7 +28,7 @@ SSH_HOST="devbox-${PROFILE_NAME}"
 if ! ssh-add -l &>/dev/null; then
   log_warn "SSH agent has no keys loaded"
   log_dim "If this is a fresh VM, the repo clone will fail without agent forwarding."
-  log_dim "Fix: ssh-add ~/.ssh/zaeem_devbox"
+  log_dim "Fix: ssh-add ~/.ssh/zaeem"
   echo
 fi
 

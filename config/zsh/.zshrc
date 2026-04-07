@@ -18,7 +18,7 @@ export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
 # pre-tmux shell. PATH is set above so bootstrap --check can find all tools.
 if [[ -n "$SSH_CONNECTION" ]] && [[ -z "$TMUX" ]] && [[ -t 0 ]]; then
   if [[ -z "${WELCOME_SHOWN:-}" ]]; then
-    [[ -f "$HOME/zaeem_devbox/devbox/bin/welcome" ]] && source "$HOME/zaeem_devbox/devbox/bin/welcome"
+    [[ -f "$HOME/zaeem/devbox/bin/welcome" ]] && source "$HOME/zaeem/devbox/bin/welcome"
   else
     exec tmux new-session -A -s main
   fi
@@ -38,7 +38,7 @@ setopt CORRECT
 
 # --- Aliases ---
 source ~/.aliases.sh
-alias bootstrap='bash ~/zaeem_devbox/devbox/bin/bootstrap'
+alias bootstrap='bash ~/zaeem/devbox/bin/bootstrap'
 
 # --- Homebrew (manages python, go, rust, etc.) ---
 BREW_PREFIX="/home/linuxbrew/.linuxbrew"

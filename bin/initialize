@@ -22,7 +22,7 @@ load_profile "$PROFILE"
 check_gcp_project
 check_gcloud_auth
 
-SSH_KEY_PATH="$HOME/.ssh/zaeem_devbox"
+SSH_KEY_PATH="$HOME/.ssh/zaeem"
 
 # ---------------------------------------------------------------------------
 # 0. Validate region

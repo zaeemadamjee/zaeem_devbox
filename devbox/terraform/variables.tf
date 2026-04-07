@@ -33,7 +33,7 @@ variable "disk_size" {
 }
 
 variable "ssh_public_keys" {
-  description = "SSH public keys for VM access — one entry per machine (contents of ~/.ssh/zaeem_devbox.pub)"
+  description = "SSH public keys for VM access — one entry per machine (contents of ~/.ssh/zaeem.pub)"
   type        = list(string)
 
   validation {
