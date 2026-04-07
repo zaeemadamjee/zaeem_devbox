@@ -93,39 +93,25 @@ cmd_link() {
   local packages="aliases atuin claude git ghostty nvim opencode starship tmux"
   local stow="${BREW_PREFIX}/bin/stow"
 
-  # Remove or back up targets that would block stow.
-  # Handles: (1) stale symlinks pointing to a different/old repo location,
-  # (2) plain files that differ from the repo copy.
   for pkg in $packages; do
-    while IFS= read -r src; do
-      local rel="${src#"$CONFIG_DIR/$pkg/"}"
-      local target="$HOME/$rel"
+    # Dry-run to find conflicts — stow reports exactly which targets block it.
+    local conflicts
+    conflicts=$(
+      "$stow" -d "$CONFIG_DIR" "$pkg" -t "$HOME" --restow -n 2>&1 \
+      | grep "existing target is not owned by stow:" \
+      | sed 's/.*existing target is not owned by stow: //'
+    ) || true
 
-      if [[ -L "$target" ]]; then
-        # Symlink already exists — skip if stow owns it (points into our config dir).
-        local _real
-        _real="$(realpath "$target" 2>/dev/null || true)"
-        [[ "$_real" == "$CONFIG_DIR"* ]] && continue
-        # Stale symlink from a previous/different repo location — remove it so
-        # stow can recreate it pointing to the current config dir.
-        rm -f "$target"
-        continue
+    for conflict in $conflicts; do
+      local ctarget="$HOME/$conflict"
+      if [[ -L "$ctarget" ]]; then
+        rm -f "$ctarget"                                        # stale symlink — remove
+      elif [[ -f "$ctarget" || -d "$ctarget" ]]; then
+        log_info "Backing up ~/$conflict → ~/${conflict}.bak"
+        mv "$ctarget" "${ctarget}.bak"                          # plain file/dir — back up
       fi
+    done
 
-      # Only handle plain files below (leave real directories for stow to traverse).
-      [[ -f "$target" ]] || continue
-      if diff -q "$src" "$target" &>/dev/null; then
-        # Identical to repo — nothing to preserve, just remove.
-        rm -f "$target"
-      else
-        # Different content — user may have customisations; back up.
-        log_info "Backing up ~/${rel} → ~/${rel}.bak"
-        mv "$target" "${target}.bak"
-      fi
-    done < <(find "$CONFIG_DIR/$pkg" -mindepth 1 2>/dev/null)
-  done
-
-  for pkg in $packages; do
     "$stow" -d "$CONFIG_DIR" "$pkg" -t "$HOME" --restow \
       && log_ok "$pkg" \
       || { log_warn "stow $pkg failed"; _track_failed "stow $pkg"; }
@@ -154,7 +140,6 @@ eval "$("${BREW_PREFIX}/bin/brew" shellenv)"
 # --- PATH ---
 export PATH="${BREW_PREFIX}/opt/rustup/bin:$PATH"  # rustup (keg-only)
 export PATH="$HOME/.local/bin:$PATH"               # claude code
-export PATH="$HOME/.opencode/bin:$PATH"            # opencode
 export PATH="$HOME/.npm-global/bin:$PATH"          # npm globals
 export PATH="$HOME/.cargo/bin:$PATH"               # rust/cargo
 export PATH="$PATH:$HOME/go/bin"                   # go binaries
@@ -236,15 +221,7 @@ cmd_tools() {
       || { log_warn "tmux plugin manager failed"; _track_failed "tpm"; }
   fi
 
-  # claude code
-  if command -v claude &>/dev/null; then
-    log_info "claude code: already installed"
-  else
-    log_info "claude code: installing (may take a minute)..."
-    curl -fsSL https://claude.ai/install.sh | bash \
-      && log_ok "claude code" \
-      || { log_warn "claude code install failed"; _track_failed "claude code"; }
-  fi
+  # claude code is installed via cask "claude-code" in pkgs/Brewfile
 
   # claude plugins
   if [[ ! -d "$HOME/.claude/plugins/superpowers" ]]; then
@@ -265,15 +242,7 @@ cmd_tools() {
     log_info "claude impeccable plugin: already installed"
   fi
 
-  # opencode
-  if command -v opencode &>/dev/null; then
-    log_info "opencode: already installed"
-  else
-    log_info "opencode: installing (may take a minute)..."
-    curl -fsSL https://opencode.ai/install | bash \
-      && log_ok "opencode" \
-      || { log_warn "opencode install failed"; _track_failed "opencode"; }
-  fi
+  # opencode is installed via brew "anomalyco/tap/opencode" in pkgs/Brewfile
 
   log_info "Seeding tealdeer page cache..."
   tldr --update >/dev/null 2>&1 || true

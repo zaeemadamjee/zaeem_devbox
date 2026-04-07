@@ -212,15 +212,7 @@ cmd_tools() {
       || { log_warn "claude code install failed"; _track_failed "claude code"; }
   fi
 
-  # opencode
-  if command -v opencode &>/dev/null; then
-    log_info "opencode: already installed"
-  else
-    log_info "opencode: installing (may take a minute)..."
-    curl -fsSL https://opencode.ai/install | bash \
-      && log_ok "opencode" \
-      || { log_warn "opencode install failed"; _track_failed "opencode"; }
-  fi
+  # opencode is installed via brew "anomalyco/tap/opencode" in pkgs/Brewfile
 
   log_info "Seeding tealdeer page cache..."
   tldr --update >/dev/null 2>&1 || true

@@ -30,7 +30,6 @@ brew "nvm"             # Node version manager; pkgs/lang/node handles `nvm insta
 # ---------------------------------------------------------------------------
 brew "ripgrep"
 brew "fzf"
-brew "fd"
 brew "jq"
 brew "curl"
 brew "wget"
@@ -81,11 +80,20 @@ tap "hashicorp/tap"
 brew "hashicorp/tap/terraform"
 
 # ---------------------------------------------------------------------------
+# AI tools
+# ---------------------------------------------------------------------------
+# Official tap stays current; homebrew-core only bumps on versions divisible by 10.
+tap "anomalyco/tap"
+brew "anomalyco/tap/opencode"
+
+# ---------------------------------------------------------------------------
 # GUI apps (macOS only)
 # ---------------------------------------------------------------------------
 if OS.mac?
-  brew "sf-symbols"          # icon font used by menu bar / status bar apps
-  cask "ghostty"             # terminal emulator
-  cask "claude"              # Claude desktop app
-  cask "claude-code"         # Claude Code CLI (managed install)
+  cask "font-jetbrains-mono-nerd-font" # JetBrains Mono with Nerd Font glyphs
+  cask "ghostty"                       # terminal emulator
+  cask "claude"                        # Claude desktop app
+  cask "claude-code"                   # Claude Code CLI (managed install)
+  cask "notion"                        # Notion
+  cask "slack"                         # Slack
 end
