@@ -17,7 +17,7 @@ check_gcp_project
 check_gcloud_auth
 resolve_instance_zone
 
-SSH_KEY="$HOME/.ssh/zaeem"
+SSH_KEY="$HOME/.ssh/zaeem_devbox"
 SSH_USER="zaeem"
 SSH_CONFIG="$HOME/.ssh/config"
 SSH_HOST="devbox-${PROFILE_NAME}"
@@ -28,7 +28,7 @@ SSH_HOST="devbox-${PROFILE_NAME}"
 if ! ssh-add -l &>/dev/null; then
   log_warn "SSH agent has no keys loaded"
   log_dim "If this is a fresh VM, the repo clone will fail without agent forwarding."
-  log_dim "Fix: ssh-add ~/.ssh/zaeem"
+  log_dim "Fix: ssh-add ~/.ssh/zaeem_devbox"
   echo
 fi
 
@@ -177,14 +177,21 @@ touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
 
 if grep -q "^Host ${SSH_HOST}$" "$SSH_CONFIG" 2>/dev/null; then
-  python3 - "$SSH_CONFIG" "$IP" "$SSH_HOST" <<'PYEOF'
+  python3 - "$SSH_CONFIG" "$IP" "$SSH_HOST" "$SSH_KEY" <<'PYEOF'
 import sys, re
-config_file, new_ip, host = sys.argv[1], sys.argv[2], sys.argv[3]
+config_file, new_ip, host, new_key = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(config_file) as f:
     content = f.read()
+# Update HostName
 content = re.sub(
     r'(Host ' + re.escape(host) + r'\n(?:[ \t]+\S.*\n)*?[ \t]+HostName )\S+',
     lambda m: m.group(1) + new_ip,
+    content
+)
+# Update IdentityFile (keeps key path current across renames)
+content = re.sub(
+    r'(Host ' + re.escape(host) + r'\n(?:[ \t]+\S.*\n)*?[ \t]+IdentityFile )\S+',
+    lambda m: m.group(1) + new_key,
     content
 )
 with open(config_file, 'w') as f:
