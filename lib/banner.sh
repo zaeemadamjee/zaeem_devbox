@@ -2,7 +2,8 @@
 #
 # lib/banner.sh — ASCII art banner utility.
 #
-# Usage: source this file, then call: print_banner
+# Usage: source this file, then call: print_banner [label]
+#   label — text shown on the monitor base (max ~20 chars). Default: empty.
 #
 
 # TTY color detection (mirrors lib/log.sh pattern)
@@ -14,7 +15,20 @@ else
   _BANNER_RESET=''
 fi
 
+# Centre $1 in a field of $2 chars, padding with spaces.
+_banner_centre() {
+  local text="$1" width="$2"
+  local len=${#text}
+  local total_pad=$(( width - len ))
+  local left_pad=$(( total_pad / 2 ))
+  local right_pad=$(( total_pad - left_pad ))
+  printf "%${left_pad}s%s%${right_pad}s" "" "$text" ""
+}
+
 print_banner() {
+  local label
+  label="$(_banner_centre "${1:-}" 25)"
+
   local lines=(
     "     ___________"
     "    / ========= \\"
@@ -23,7 +37,7 @@ print_banner() {
     "  | | >za       | |"
     "  | |           | |"
     "  | |___________| |________________________"
-    "  \\=_____________/     zaeem adamjee       )"
+    "  \\=_____________/${label})"
     "  / \"\"\"\"\"\"\"\"\"\"\"\"\" \\                       /"
     " / ::::::::::::::: \\                  =D-'"
     "(___________________)"

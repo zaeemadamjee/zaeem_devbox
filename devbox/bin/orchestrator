@@ -142,7 +142,7 @@ EOF
 # Main
 # ---------------------------------------------------------------------------
 main() {
-  print_banner
+  print_banner "devbox"
   local cmd="${1:-help}"
   shift || true
 
