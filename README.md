@@ -1,18 +1,19 @@
 # zaeem
 
-Personal dev environment — dotfiles, language toolchains, and GCP devbox provisioning in one repo.
+Personal dev environment — dotfiles, language toolchains, and GCP devbox provisioning.
 
 ---
 
-## Mac setup
-
-### Quick start
+## Mac
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zaeemadamjee/zaeem/main/bin/bootstrap | bash
 ```
 
-`bootstrap` installs Xcode CLI tools, clones the repo to `~/workspace/zaeem`, then runs `setup-mac` to install Homebrew packages, stow dotfiles, write shell init, and install language toolchains and tools. Open a new shell when done.
+Installs Xcode CLI tools, clones the repo, sets up Homebrew packages, dotfiles, and language toolchains. Open a new shell when done.
+
+<details>
+<summary>More details</summary>
 
 To check status at any time:
 
@@ -20,17 +21,37 @@ To check status at any time:
 ~/workspace/zaeem/bin/setup-mac check
 ```
 
+`bootstrap` clones the repo to `~/workspace/zaeem`, then runs `setup-mac` to install Homebrew packages, stow dotfiles, write shell init, and install language toolchains and tools.
+
+</details>
+
 ---
 
-## Devbox (GCP Linux VM)
+## Devbox
 
-### Prerequisites
+```bash
+bin/orchestrator <command> [profile]
+```
+
+| Command | Effect |
+|---|---|
+| `status` | Show live VM state for all profiles |
+| `start <profile>` | Start VM, copy secrets, SSH in |
+| `stop <profile>` | Stop VM (disk persists, no compute charges) |
+| `reset <profile>` | Wipe and recreate VM ⚠ destructive |
+| `initialize <profile>` | First-time provision (APIs, SSH key, state bucket, Terraform) |
+
+<details>
+<summary>Prerequisites</summary>
 
 - `gcloud` CLI authenticated (`gcloud auth login`)
 - A GCP project with billing enabled
 - SSH key loaded in agent (`ssh-add ~/.ssh/zaeem`)
 
-### Profiles
+</details>
+
+<details>
+<summary>Profiles</summary>
 
 Each VM is defined by a profile in `devbox/profiles/<name>`. A profile sets the GCP project, region, machine type, disk size, SSH keys, and which repos to clone on first login.
 
@@ -49,21 +70,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 `bin/start` copies this to `~/.config/secrets.env` on the VM before connecting.
 
-### Orchestrator
+</details>
 
-```bash
-bin/orchestrator <command> [profile]
-```
-
-| Command | Effect |
-|---|---|
-| `status` | Show live VM state for all profiles |
-| `start <profile>` | Start VM, copy secrets, SSH in |
-| `stop <profile>` | Stop VM (disk persists, no compute charges) |
-| `reset <profile>` | Wipe and recreate VM ⚠ destructive |
-| `initialize <profile>` | First-time provision (APIs, SSH key, state bucket, Terraform) |
-
-### First provision
+<details>
+<summary>First provision</summary>
 
 ```bash
 bin/orchestrator initialize personal
@@ -73,8 +83,4 @@ bin/orchestrator start personal
 
 Bootstrap runs interactively on first SSH login.
 
-### Daily use
-
-```bash
-bin/orchestrator start personal
-```
+</details>
