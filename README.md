@@ -1,5 +1,5 @@
 # zaeem
 
-Personal devbox — dotfiles, toolchains, and GCP VM provisioning.
+Personal devbox — dotfiles, toolchains, and VM provisioning.
 
-    curl -fsSL https://raw.githubusercontent.com/zaeemadamjee/zaeem/main/bin/bootstrap | bash
+    curl -fsSL https://raw.githubusercontent.com/zaeemadamjee/zaeem/main/bin/bootstrap | bash -s -- all

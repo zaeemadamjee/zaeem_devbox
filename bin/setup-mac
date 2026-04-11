@@ -334,6 +334,7 @@ cmd_all() {
 }
 
 cmd_help() {
+  print_banner
   cat <<EOF
 
   setup-mac — provision a fresh macOS machine (Apple Silicon)
@@ -411,7 +412,7 @@ _summary() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
-  local cmd="${1:-all}"
+  local cmd="${1:-help}"
   shift || true
 
   case "$cmd" in

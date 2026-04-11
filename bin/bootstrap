@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Bootstrap a fresh macOS machine.
-# Usage: curl -fsSL https://raw.githubusercontent.com/zaeemadamjee/zaeem/main/bin/bootstrap | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/zaeemadamjee/zaeem/main/bin/bootstrap | bash -s -- all
 #
 set -euo pipefail
 
@@ -62,7 +62,7 @@ else
 fi
 
 log_section "Running setup"
-"$DOTFILES/bin/setup-mac" </dev/tty
+"$DOTFILES/bin/setup-mac" all </dev/tty
 
 log_section "Switching to SSH remote"
 git -C "$DOTFILES" remote set-url origin "$SSH_URL"
