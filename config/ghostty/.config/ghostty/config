@@ -2,7 +2,7 @@ title = Zaeem
 
 # Theme
 theme = Night Owl
-background = #011627
+background = #000b14
 foreground = #d6deeb
 selection-background = #5f7e97
 selection-foreground = #dfe5ee
@@ -39,7 +39,7 @@ clipboard-read = allow
 
 # Appearance
 background-blur = true
-background-opacity = 0.75
+background-opacity = 0.8
 
 # MacOS
 macos-titlebar-style = tabs
