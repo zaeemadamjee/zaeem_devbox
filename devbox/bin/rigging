@@ -429,6 +429,14 @@ cmd_check() {
   systemctl is-active docker &>/dev/null                 && _chk "docker running"   ok || _chk "docker running"   fail
   getent group docker | grep -qw "$USER" 2>/dev/null     && _chk "docker group"     ok || _chk "docker group"     fail
 
+  log_section "Tailscale"
+  command -v tailscale &>/dev/null \
+    && _chk "tailscale installed" ok || _chk "tailscale installed" fail
+  systemctl is-active tailscaled &>/dev/null \
+    && _chk "tailscaled running" ok || _chk "tailscaled running" fail
+  tailscale status --json 2>/dev/null | grep -q '"BackendState":"Running"' \
+    && _chk "tailscale authenticated" ok || _chk "tailscale authenticated" fail
+
   log_section "Idle timer"
   if _idle_timer_enabled; then
     systemctl is-enabled devbox-idle.timer &>/dev/null \
