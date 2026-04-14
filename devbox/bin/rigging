@@ -434,7 +434,7 @@ cmd_check() {
     && _chk "tailscale installed" ok || _chk "tailscale installed" fail
   systemctl is-active tailscaled &>/dev/null \
     && _chk "tailscaled running" ok || _chk "tailscaled running" fail
-  tailscale status --json 2>/dev/null | grep -q '"BackendState":"Running"' \
+  tailscale status --json 2>/dev/null | grep -q '"BackendState": "Running"' \
     && _chk "tailscale authenticated" ok || _chk "tailscale authenticated" fail
 
   log_section "Idle timer"
