@@ -286,7 +286,7 @@ cmd_tailscale() {
     if curl -fsSL https://tailscale.com/install.sh | sh >"$_ts_log" 2>&1; then
       log_ok "Tailscale installed"
     else
-      log_error "Tailscale install failed — see log: $_ts_log"
+      log_warn "Tailscale install failed — see log: $_ts_log"
       cat "$_ts_log" >&2
       _track_failed "tailscale install"
       return
