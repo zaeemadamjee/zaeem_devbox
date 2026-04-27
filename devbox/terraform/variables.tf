@@ -71,3 +71,9 @@ variable "firewall_allow_ports" {
   default     = []
 }
 
+variable "enable_display" {
+  description = "Expose a VirtIO GPU virtual display device to the VM. Required for GUI/desktop sessions (rigging gui). Applies on next stop/start — no VM recreation needed."
+  type        = bool
+  default     = false
+}
+

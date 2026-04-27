@@ -75,6 +75,7 @@ load_profile() {
 
   GCP_ZONE="${GCP_ZONE:-}"
   STATIC_IP="${STATIC_IP:-false}"
+  ENABLE_DISPLAY="${ENABLE_DISPLAY:-false}"
   SSH_PUBLIC_KEYS=("${SSH_PUBLIC_KEYS[@]+"${SSH_PUBLIC_KEYS[@]}"}")
   REPOS=("${REPOS[@]+"${REPOS[@]}"}")
   FIREWALL_ALLOW_PORTS=("${FIREWALL_ALLOW_PORTS[@]+"${FIREWALL_ALLOW_PORTS[@]}"}")
@@ -178,6 +179,7 @@ machine_type         = "${VM_MACHINE_TYPE}"
 disk_size            = ${VM_DISK_SIZE}
 idle_timer_enabled   = ${IDLE_TIMER_ENABLED}
 static_ip            = ${STATIC_IP}
+enable_display       = ${ENABLE_DISPLAY}
 profile_name         = "${PROFILE_NAME}"
 ssh_public_keys      = ${ssh_keys_hcl}
 repos                = ${repos_hcl}

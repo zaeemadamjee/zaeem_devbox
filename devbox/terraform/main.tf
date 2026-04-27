@@ -212,6 +212,13 @@ ZSHRC
     EOF
   }
 
+  # Expose a VirtIO GPU virtual display device — required for GUI sessions.
+  # enable_display = true makes /dev/dri/card0 appear inside the VM, which
+  # X.Org's modesetting driver uses instead of a software-only fallback.
+  # This is a live-updatable attribute: applying it only requires a stop/start,
+  # not a VM recreation (allow_stopping_for_update = true handles this).
+  enable_display = var.enable_display
+
   # Allow stopping the instance without Terraform complaining
   allow_stopping_for_update = true
 }
