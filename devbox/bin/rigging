@@ -4,17 +4,20 @@
 # Usage: rigging [command]
 #
 # Commands:
-#   all       Run everything  (default)
-#   install   Homebrew + brew bundle
-#   link      Stow dotfiles + .hushlogin
-#   langs     Language toolchains via pkgs/lang/*
-#   tools     Claude code, opencode, TPM, atuin, tldr
-#   docker    Docker Engine + daemon + group membership
-#   tailscale Install Tailscale daemon + authenticate
-#   idle      Systemd idle timer
-#   repos     Clone workspace repos from GCE metadata
-#   check     Print ✓/✗ status without modifying anything
-#   help      Show this message
+#   all        Run everything  (default)
+#   install    Homebrew + brew bundle
+#   link       Stow dotfiles + .hushlogin
+#   langs      Language toolchains via pkgs/lang/*
+#   tools      Claude code, opencode, TPM, atuin, tldr
+#   docker     Docker Engine + daemon + group membership
+#   tailscale  Install Tailscale daemon + authenticate
+#   idle       Systemd idle timer
+#   repos      Clone workspace repos from GCE metadata
+#   gui        Install GUI stack (GNOME + RustDesk) and start it
+#   gui-stop   Stop the GUI session (Xorg + GNOME + RustDesk daemon)
+#   gui-check  Report status of the GUI stack
+#   check      Print ✓/✗ status without modifying anything
+#   help       Show this message
 #
 # Safe to re-run (idempotent).
 # Profile is read from DEVBOX_PROFILE env var or ~/.config/devbox/profile.
@@ -385,6 +388,240 @@ cmd_repos() {
   done <<< "$repos_raw"
 }
 
+cmd_gui() {
+  log_section "GUI stack"
+
+  # ---- Verify VirtIO GPU device is present --------------------------------
+  if [[ ! -e /dev/dri/card0 ]]; then
+    log_error "VirtIO GPU device not found (/dev/dri/card0 missing)"
+    log_dim "Enable it in the profile (ENABLE_DISPLAY=true) and run:"
+    log_dim "  devbox reset --profile \$DEVBOX_PROFILE"
+    log_dim "or stop/start the VM to apply the Terraform change."
+    _track_failed "virtio gpu"
+    return 1
+  fi
+  log_ok "VirtIO GPU present (/dev/dri/card0)"
+
+  # ---- Add RustDesk apt repo ----------------------------------------------
+  if ! apt-cache show rustdesk &>/dev/null 2>&1; then
+    log_info "Adding RustDesk apt repo..."
+    curl -fsSL https://packagecloud.io/rustdesk/rustdesk/gpgkey \
+      | sudo gpg --dearmor -o /usr/share/keyrings/rustdesk.gpg
+    echo "deb [signed-by=/usr/share/keyrings/rustdesk.gpg] https://packagecloud.io/rustdesk/rustdesk/ubuntu/ noble main" \
+      | sudo tee /etc/apt/sources.list.d/rustdesk.list > /dev/null
+    sudo apt-get update -qq
+    log_ok "RustDesk apt repo"
+  else
+    log_info "RustDesk apt repo: already configured"
+  fi
+
+  # ---- Install apt packages -----------------------------------------------
+  local gui_pkgs=(
+    xorg
+    gnome-session
+    gnome-shell
+    gnome-terminal
+    gnome-tweaks
+    gdm3
+    firefox
+    rustdesk
+  )
+
+  log_info "Installing GUI packages via apt (this takes a few minutes)..."
+  local _gui_log
+  _gui_log="$(mktemp)"
+  if DEBIAN_FRONTEND=noninteractive sudo apt-get install -y "${gui_pkgs[@]}" \
+      >"$_gui_log" 2>&1; then
+    log_ok "GUI packages installed"
+  else
+    log_warn "GUI package install had errors — see log: $_gui_log"
+    cat "$_gui_log" >&2
+    _track_failed "gui packages"
+    return 1
+  fi
+  rm -f "$_gui_log"
+
+  # ---- Configure GDM3 for headless VirtIO GPU X session -------------------
+  # Set GNOME session type to X11 (not Wayland) — Wayland headless on GCE
+  # without a display manager seat requires additional PipeWire configuration
+  # that is out of scope. X11 with the modesetting driver on VirtIO GPU works
+  # reliably.
+  if ! grep -q "WaylandEnable=false" /etc/gdm3/custom.conf 2>/dev/null; then
+    log_info "Configuring GDM3 for X11 session..."
+    sudo sed -i 's/#WaylandEnable=false/WaylandEnable=false/' /etc/gdm3/custom.conf \
+      || echo -e "\n[daemon]\nWaylandEnable=false" | sudo tee -a /etc/gdm3/custom.conf > /dev/null
+    log_ok "GDM3: WaylandEnable=false"
+  else
+    log_info "GDM3: already configured for X11"
+  fi
+
+  # ---- Configure RustDesk for direct IP mode with permanent password ------
+  local rd_config_dir="$HOME/.config/rustdesk"
+  local rd_config="$rd_config_dir/RustDesk2.toml"
+  mkdir -p "$rd_config_dir"
+
+  # Generate a permanent password once; preserve it on re-runs.
+  local rd_password
+  if [[ -f "$rd_config" ]] && grep -q "^permanent_password" "$rd_config" 2>/dev/null; then
+    rd_password=$(grep "^permanent_password" "$rd_config" | cut -d'"' -f2)
+    log_info "RustDesk: reusing existing permanent password"
+  else
+    # Generate a random 16-char alphanumeric password
+    rd_password=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+    log_info "RustDesk: generating new permanent password"
+  fi
+
+  # Write RustDesk2.toml — direct IP mode, permanent password, Tailscale whitelist
+  cat > "$rd_config" <<EOF
+[options]
+direct-server = "Y"
+direct-access-port = "21118"
+verification-method = "use-permanent-password"
+approve-mode = "password"
+permanent_password = "${rd_password}"
+whitelist = "100.64.0.0/10"
+EOF
+  log_ok "RustDesk configured (direct IP, port 21118, Tailscale whitelist)"
+
+  # ---- Start GDM3 (which starts the GNOME X session) ---------------------
+  if systemctl is-active gdm3 &>/dev/null; then
+    log_info "GDM3: already running"
+  else
+    log_info "GDM3: starting..."
+    sudo systemctl enable --now gdm3 \
+      && log_ok "GDM3 started" \
+      || { log_warn "GDM3 failed to start"; _track_failed "gdm3"; return 1; }
+  fi
+
+  # ---- Start RustDesk server daemon as a systemd user service ------------
+  # rustdesk --server runs the screen-capture/input daemon; it does not open
+  # a GUI window itself. We manage it as a systemd --user service so it
+  # restarts automatically and doesn't require a terminal to stay open.
+  local rd_service_dir="$HOME/.config/systemd/user"
+  mkdir -p "$rd_service_dir"
+  cat > "$rd_service_dir/rustdesk.service" <<'UNIT'
+[Unit]
+Description=RustDesk server daemon (direct IP mode)
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/rustdesk --server
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=default.target
+UNIT
+
+  systemctl --user daemon-reload
+  systemctl --user enable rustdesk
+  systemctl --user start rustdesk \
+    && log_ok "RustDesk daemon started" \
+    || { log_warn "RustDesk daemon failed to start"; _track_failed "rustdesk daemon"; return 1; }
+
+  # ---- Print connection info -----------------------------------------------
+  local ts_ip
+  ts_ip=$(tailscale ip -4 2>/dev/null || true)
+
+  echo
+  log_ok "GUI stack ready"
+  echo
+  log_dim "  ┌─ Connection details ──────────────────────────────────────┐"
+  if [[ -n "$ts_ip" ]]; then
+    log_dim "  │  Tailscale IP : ${ts_ip}"
+  else
+    log_dim "  │  Tailscale IP : (not connected — run: sudo tailscale up)"
+  fi
+  log_dim "  │  Port         : 21118 (direct IP, no relay)"
+  log_dim "  │  Password     : ${rd_password}"
+  log_dim "  │"
+  log_dim "  │  On your Mac:"
+  log_dim "  │    1. Open RustDesk (brew install --cask rustdesk)"
+  log_dim "  │    2. Enter the Tailscale IP in the address bar"
+  log_dim "  │    3. Click Connect — enter the password above"
+  log_dim "  │    4. Check 'Remember password' so you only type it once"
+  log_dim "  └───────────────────────────────────────────────────────────┘"
+  echo
+  log_dim "  Password is also stored at: $rd_config"
+  log_dim "  To stop the GUI:  rigging gui-stop"
+  log_dim "  To check status:  rigging gui-check"
+  echo
+}
+
+cmd_gui_stop() {
+  log_section "GUI stop"
+
+  log_info "Stopping RustDesk daemon..."
+  systemctl --user stop rustdesk 2>/dev/null \
+    && log_ok "RustDesk daemon stopped" \
+    || log_info "RustDesk daemon: not running"
+
+  log_info "Stopping GDM3..."
+  sudo systemctl stop gdm3 2>/dev/null \
+    && log_ok "GDM3 stopped" \
+    || log_info "GDM3: not running"
+}
+
+cmd_gui_check() {
+  log_section "GUI check"
+
+  local missing=()
+  _gchk() {
+    local label="$1" result="$2"
+    if [[ "$result" == "ok" ]]; then
+      log_ok "$label"
+    else
+      log_error "$label"
+      missing+=("$label")
+    fi
+  }
+
+  # VirtIO GPU
+  [[ -e /dev/dri/card0 ]] \
+    && _gchk "VirtIO GPU (/dev/dri/card0)" ok \
+    || _gchk "VirtIO GPU (/dev/dri/card0)" fail
+
+  # Packages
+  command -v rustdesk &>/dev/null \
+    && _gchk "rustdesk installed" ok || _gchk "rustdesk installed" fail
+  dpkg -l gdm3 &>/dev/null \
+    && _gchk "gdm3 installed" ok || _gchk "gdm3 installed" fail
+
+  # Services
+  systemctl is-active gdm3 &>/dev/null \
+    && _gchk "gdm3 running" ok || _gchk "gdm3 running" fail
+  systemctl --user is-active rustdesk &>/dev/null \
+    && _gchk "rustdesk daemon running" ok || _gchk "rustdesk daemon running" fail
+
+  # X display
+  DISPLAY=:0 xdpyinfo &>/dev/null \
+    && _gchk "X display :0 reachable" ok || _gchk "X display :0 reachable" fail
+
+  # Connection info
+  local ts_ip
+  ts_ip=$(tailscale ip -4 2>/dev/null || true)
+  local rd_config="$HOME/.config/rustdesk/RustDesk2.toml"
+  local rd_password
+  rd_password=$(grep "^permanent_password" "$rd_config" 2>/dev/null | cut -d'"' -f2 || echo "(not set — run: rigging gui)")
+
+  echo
+  log_dim "  ┌─ Connection details ──────────────────────────────────────┐"
+  if [[ -n "$ts_ip" ]]; then
+    log_dim "  │  Tailscale IP : ${ts_ip}"
+  else
+    log_dim "  │  Tailscale IP : (not connected — run: sudo tailscale up)"
+  fi
+  log_dim "  │  Port         : 21118"
+  log_dim "  │  Password     : ${rd_password}"
+  log_dim "  └───────────────────────────────────────────────────────────┘"
+  echo
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    log_warn "${#missing[@]} GUI component(s) not ready — run: rigging gui"
+  fi
+}
+
 cmd_check() {
   log_banner "rigging check"
 
@@ -446,6 +683,19 @@ cmd_check() {
     log_info "idle timer disabled in profile"
   fi
 
+  log_section "GUI (optional)"
+  if [[ -e /dev/dri/card0 ]]; then
+    _chk "VirtIO GPU (/dev/dri/card0)" ok
+    command -v rustdesk &>/dev/null \
+      && _chk "rustdesk installed" ok || _chk "rustdesk installed" fail
+    systemctl is-active gdm3 &>/dev/null \
+      && _chk "gdm3 running" ok || log_info "gdm3: not running (run: rigging gui)"
+    systemctl --user is-active rustdesk &>/dev/null \
+      && _chk "rustdesk daemon" ok || log_info "rustdesk daemon: not running (run: rigging gui)"
+  else
+    log_info "VirtIO GPU not present — GUI not enabled (ENABLE_DISPLAY=false in profile)"
+  fi
+
   log_section "Secrets"
   [[ -s "$HOME/.config/secrets.env" ]] \
     && _chk "~/.config/secrets.env" ok || _chk "~/.config/secrets.env" fail
@@ -481,17 +731,20 @@ cmd_help() {
   Usage: rigging [command]
 
   Commands:
-    all       Run everything  (default)
-    install   Homebrew + brew bundle
-    link      Stow dotfiles + .hushlogin
-    langs     Language toolchains via pkgs/lang/*
-    tools     Claude code, opencode, TPM, atuin, tldr
-    docker    Docker Engine + daemon + group membership
-    tailscale Install Tailscale daemon + authenticate
-    idle      Systemd idle timer
-    repos     Clone workspace repos from GCE metadata
-    check     Print ✓/✗ status without modifying anything
-    help      Show this message
+    all        Run everything  (default)
+    install    Homebrew + brew bundle
+    link       Stow dotfiles + .hushlogin
+    langs      Language toolchains via pkgs/lang/*
+    tools      Claude code, opencode, TPM, atuin, tldr
+    docker     Docker Engine + daemon + group membership
+    tailscale  Install Tailscale daemon + authenticate
+    idle       Systemd idle timer
+    repos      Clone workspace repos from GCE metadata
+    gui        Install GUI stack (GNOME + RustDesk) and start it
+    gui-stop   Stop the GUI session (Xorg + GNOME + RustDesk daemon)
+    gui-check  Report status of the GUI stack and print connection info
+    check      Print ✓/✗ status without modifying anything
+    help       Show this message
 
 EOF
 }
@@ -537,14 +790,17 @@ main() {
 
   case "$cmd" in
     all)            cmd_all ;;
-    install)   log_banner "rigging install";   cmd_install;   _summary ;;
-    link)      log_banner "rigging link";      cmd_link;      _summary ;;
-    langs)     log_banner "rigging langs";     cmd_langs;     _summary ;;
-    tools)     log_banner "rigging tools";     cmd_tools;     _summary ;;
-    docker)    log_banner "rigging docker";    cmd_docker;    _summary ;;
-    tailscale) log_banner "rigging tailscale"; cmd_tailscale; _summary ;;
-    idle)      log_banner "rigging idle";      cmd_idle;      _summary ;;
-    repos)     log_banner "rigging repos";     cmd_repos;     _summary ;;
+    install)   log_banner "rigging install";    cmd_install;   _summary ;;
+    link)      log_banner "rigging link";       cmd_link;      _summary ;;
+    langs)     log_banner "rigging langs";      cmd_langs;     _summary ;;
+    tools)     log_banner "rigging tools";      cmd_tools;     _summary ;;
+    docker)    log_banner "rigging docker";     cmd_docker;    _summary ;;
+    tailscale) log_banner "rigging tailscale";  cmd_tailscale; _summary ;;
+    idle)      log_banner "rigging idle";       cmd_idle;      _summary ;;
+    repos)     log_banner "rigging repos";      cmd_repos;     _summary ;;
+    gui)       log_banner "rigging gui";        cmd_gui;       _summary ;;
+    gui-stop)  log_banner "rigging gui-stop";   cmd_gui_stop;  _summary ;;
+    gui-check) log_banner "rigging gui-check";  cmd_gui_check ;;
     check)     _resolve_profile; cmd_check ;;
     help|--help|-h) cmd_help ;;
     *)
