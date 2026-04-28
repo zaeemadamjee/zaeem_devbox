@@ -455,8 +455,8 @@ cmd_gui() {
   # ---- Write Xorg system service ------------------------------------------
   # Starts Xorg on :0 using the VirtIO GPU (modesetting driver). Runs as a
   # system service so it starts on boot and doesn't require a logged-in user.
-  # -nolisten tcp: no network X (security). -nocursor: hide cursor when idle.
-  sudo tee /etc/systemd/system/xorg-:0.service > /dev/null <<'UNIT'
+  # Unit named "xorg-display" (no colon) to avoid systemd escaping issues.
+  sudo tee /etc/systemd/system/xorg-display.service > /dev/null <<'UNIT'
 [Unit]
 Description=Xorg server on display :0
 After=systemd-udev-settle.service
@@ -477,8 +477,8 @@ UNIT
   sudo tee /etc/systemd/system/xfce4-session.service > /dev/null <<UNIT
 [Unit]
 Description=XFCE4 desktop session on display :0
-After=xorg-:0.service
-Requires=xorg-:0.service
+After=xorg-display.service
+Requires=xorg-display.service
 
 [Service]
 User=${USER}
@@ -500,7 +500,7 @@ UNIT
 [Unit]
 Description=RustDesk server daemon (direct IP mode)
 After=xfce4-session.service
-Requires=xorg-:0.service
+Requires=xorg-display.service
 
 [Service]
 User=${USER}
@@ -516,7 +516,7 @@ WantedBy=multi-user.target
 UNIT
 
   sudo systemctl daemon-reload
-  log_ok "systemd services written (xorg-:0, xfce4-session, rustdesk)"
+  log_ok "systemd services written (xorg-display, xfce4-session, rustdesk)"
 
   # ---- Configure RustDesk for direct IP mode with permanent password ------
   local rd_config_dir="${HOME}/.config/rustdesk"
@@ -546,11 +546,13 @@ EOF
 
   # ---- Enable and start all three services --------------------------------
   log_info "Enabling and starting GUI services..."
-  sudo systemctl enable xorg-:0.service xfce4-session.service rustdesk.service
+  sudo systemctl enable xorg-display.service xfce4-session.service rustdesk.service \
+    && log_ok "Services enabled" \
+    || { log_warn "systemctl enable failed"; _track_failed "systemctl enable"; return 1; }
 
-  sudo systemctl restart xorg-:0.service \
+  sudo systemctl restart xorg-display.service \
     && log_ok "Xorg started" \
-    || { log_warn "Xorg failed to start — check: journalctl -u xorg-:0"; _track_failed "xorg"; return 1; }
+    || { log_warn "Xorg failed to start — check: journalctl -u xorg-display"; _track_failed "xorg"; return 1; }
 
   # Wait for Xorg to be ready before starting the session
   local xorg_ready=false
@@ -563,7 +565,7 @@ EOF
   done
   if [[ "$xorg_ready" != true ]]; then
     log_warn "Xorg started but display :0 not reachable after 15s"
-    log_dim "Check: journalctl -u xorg-:0"
+    log_dim "Check: journalctl -u xorg-display"
     _track_failed "xorg display"
     return 1
   fi
@@ -620,7 +622,7 @@ cmd_gui_stop() {
     || log_info "XFCE4 session: not running"
 
   log_info "Stopping Xorg..."
-  sudo systemctl stop "xorg-:0" 2>/dev/null \
+  sudo systemctl stop xorg-display.service 2>/dev/null \
     && log_ok "Xorg stopped" \
     || log_info "Xorg: not running"
 }
@@ -691,7 +693,7 @@ cmd_check() {
     _chk "VirtIO GPU (/dev/dri/card0)" ok
     command -v rustdesk &>/dev/null \
       && _chk "rustdesk installed" ok || _chk "rustdesk installed" fail
-    systemctl is-active "xorg-:0" &>/dev/null \
+    systemctl is-active xorg-display.service &>/dev/null \
       && _chk "Xorg running" ok || log_info "Xorg: not running (run: rigging gui)"
     systemctl is-active xfce4-session &>/dev/null \
       && _chk "XFCE4 session running" ok || log_info "XFCE4: not running (run: rigging gui)"
