@@ -414,19 +414,23 @@ cmd_gui() {
     firefox
   )
 
-  log_info "Installing GUI packages via apt (this takes a few minutes)..."
-  local _gui_log
-  _gui_log="$(mktemp)"
-  if DEBIAN_FRONTEND=noninteractive sudo apt-get install -y "${gui_pkgs[@]}" \
-      >"$_gui_log" 2>&1; then
+  # Pre-seed gdm3 debconf answer so apt never blocks waiting for user input.
+  # Without this, gdm3 prompts "Which display manager should be the default?"
+  # even with DEBIAN_FRONTEND=noninteractive.
+  echo "gdm3 shared/default-x-display-manager select gdm3" \
+    | sudo debconf-set-selections
+
+  # Stream output directly — GNOME + deps can be 300-500 MB and take several
+  # minutes. Hiding output behind a log redirect makes it look frozen.
+  log_info "Installing GUI packages via apt (this takes several minutes — output shown below)..."
+  if DEBIAN_FRONTEND=noninteractive DEBIAN_PRIORITY=critical \
+      sudo -E apt-get install -y "${gui_pkgs[@]}"; then
     log_ok "GUI packages installed"
   else
-    log_warn "GUI package install had errors — see log: $_gui_log"
-    cat "$_gui_log" >&2
+    log_warn "GUI package install failed"
     _track_failed "gui packages"
     return 1
   fi
-  rm -f "$_gui_log"
 
   # ---- Install RustDesk from GitHub releases ------------------------------
   # RustDesk publishes .deb packages to GitHub releases only (no apt repo).
