@@ -402,25 +402,19 @@ cmd_gui() {
   log_ok "VirtIO GPU present (/dev/dri/card0)"
 
   # ---- Install apt packages -----------------------------------------------
-  # RustDesk has no apt repo — it distributes only via GitHub releases.
-  # Install all other GUI packages via apt first, then install RustDesk .deb.
+  # GDM3/GNOME is unreliable headless — it manages physical display seats and
+  # won't create a usable X session on a VM without one. Instead we use:
+  #   Xorg (system service, no display manager) + XFCE4 (lightweight, headless-friendly)
+  # This is the standard pattern for headless X remote desktop servers.
   local gui_pkgs=(
     xorg
-    gnome-session
-    gnome-shell
-    gnome-terminal
-    gnome-tweaks
-    gdm3
+    xfce4
+    xfce4-terminal
+    dbus-x11
     firefox
   )
 
-  # Pre-seed gdm3 debconf answer so apt never blocks waiting for user input.
-  # Without this, gdm3 prompts "Which display manager should be the default?"
-  # even with DEBIAN_FRONTEND=noninteractive.
-  echo "gdm3 shared/default-x-display-manager select gdm3" \
-    | sudo debconf-set-selections
-
-  # Stream output directly — GNOME + deps can be 300-500 MB and take several
+  # Stream output directly — X + XFCE deps can be 300+ MB and take several
   # minutes. Hiding output behind a log redirect makes it look frozen.
   log_info "Installing GUI packages via apt (this takes several minutes — output shown below)..."
   if DEBIAN_FRONTEND=noninteractive DEBIAN_PRIORITY=critical \
@@ -458,23 +452,75 @@ cmd_gui() {
     rm -f "$rd_deb"
   fi
 
-  # ---- Configure GDM3 for headless VirtIO GPU X session -------------------
-  # Set GNOME session type to X11 (not Wayland) — Wayland headless on GCE
-  # without a display manager seat requires additional PipeWire configuration
-  # that is out of scope. X11 with the modesetting driver on VirtIO GPU works
-  # reliably.
-  if ! grep -q "WaylandEnable=false" /etc/gdm3/custom.conf 2>/dev/null; then
-    log_info "Configuring GDM3 for X11 session..."
-    sudo sed -i 's/#WaylandEnable=false/WaylandEnable=false/' /etc/gdm3/custom.conf \
-      || echo -e "\n[daemon]\nWaylandEnable=false" | sudo tee -a /etc/gdm3/custom.conf > /dev/null
-    log_ok "GDM3: WaylandEnable=false"
-  else
-    log_info "GDM3: already configured for X11"
-  fi
+  # ---- Write Xorg system service ------------------------------------------
+  # Starts Xorg on :0 using the VirtIO GPU (modesetting driver). Runs as a
+  # system service so it starts on boot and doesn't require a logged-in user.
+  # -nolisten tcp: no network X (security). -nocursor: hide cursor when idle.
+  sudo tee /etc/systemd/system/xorg-:0.service > /dev/null <<'UNIT'
+[Unit]
+Description=Xorg server on display :0
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+ExecStart=/usr/bin/Xorg :0 -nolisten tcp vt1
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  # ---- Write XFCE4 session service ----------------------------------------
+  # Starts an XFCE4 desktop session on display :0 as the zaeem user, after
+  # Xorg is ready. Uses dbus-launch so apps can communicate via D-Bus.
+  sudo tee /etc/systemd/system/xfce4-session.service > /dev/null <<UNIT
+[Unit]
+Description=XFCE4 desktop session on display :0
+After=xorg-:0.service
+Requires=xorg-:0.service
+
+[Service]
+User=${USER}
+Environment=DISPLAY=:0
+Environment=HOME=${HOME}
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/bin/dbus-launch --exit-with-session /usr/bin/xfce4-session
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  # ---- Write RustDesk system service --------------------------------------
+  # Runs RustDesk in server mode as the zaeem user, capturing display :0.
+  # System service (not user service) so it works from SSH without linger.
+  sudo tee /etc/systemd/system/rustdesk.service > /dev/null <<UNIT
+[Unit]
+Description=RustDesk server daemon (direct IP mode)
+After=xfce4-session.service
+Requires=xorg-:0.service
+
+[Service]
+User=${USER}
+Environment=DISPLAY=:0
+Environment=HOME=${HOME}
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/rustdesk --server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  sudo systemctl daemon-reload
+  log_ok "systemd services written (xorg-:0, xfce4-session, rustdesk)"
 
   # ---- Configure RustDesk for direct IP mode with permanent password ------
-  local rd_config_dir="$HOME/.config/rustdesk"
-  local rd_config="$rd_config_dir/RustDesk2.toml"
+  local rd_config_dir="${HOME}/.config/rustdesk"
+  local rd_config="${rd_config_dir}/RustDesk2.toml"
   mkdir -p "$rd_config_dir"
 
   # Generate a permanent password once; preserve it on re-runs.
@@ -483,12 +529,10 @@ cmd_gui() {
     rd_password=$(grep "^permanent_password" "$rd_config" | cut -d'"' -f2)
     log_info "RustDesk: reusing existing permanent password"
   else
-    # Generate a random 16-char alphanumeric password
     rd_password=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
     log_info "RustDesk: generating new permanent password"
   fi
 
-  # Write RustDesk2.toml — direct IP mode, permanent password, Tailscale whitelist
   cat > "$rd_config" <<EOF
 [options]
 direct-server = "Y"
@@ -500,42 +544,38 @@ whitelist = "100.64.0.0/10"
 EOF
   log_ok "RustDesk configured (direct IP, port 21118, Tailscale whitelist)"
 
-  # ---- Start GDM3 (which starts the GNOME X session) ---------------------
-  if systemctl is-active gdm3 &>/dev/null; then
-    log_info "GDM3: already running"
-  else
-    log_info "GDM3: starting..."
-    sudo systemctl enable --now gdm3 \
-      && log_ok "GDM3 started" \
-      || { log_warn "GDM3 failed to start"; _track_failed "gdm3"; return 1; }
+  # ---- Enable and start all three services --------------------------------
+  log_info "Enabling and starting GUI services..."
+  sudo systemctl enable xorg-:0.service xfce4-session.service rustdesk.service
+
+  sudo systemctl restart xorg-:0.service \
+    && log_ok "Xorg started" \
+    || { log_warn "Xorg failed to start — check: journalctl -u xorg-:0"; _track_failed "xorg"; return 1; }
+
+  # Wait for Xorg to be ready before starting the session
+  local xorg_ready=false
+  for i in {1..15}; do
+    if DISPLAY=:0 xdpyinfo &>/dev/null 2>&1; then
+      xorg_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$xorg_ready" != true ]]; then
+    log_warn "Xorg started but display :0 not reachable after 15s"
+    log_dim "Check: journalctl -u xorg-:0"
+    _track_failed "xorg display"
+    return 1
   fi
+  log_ok "Xorg display :0 reachable"
 
-  # ---- Start RustDesk server daemon as a systemd user service ------------
-  # rustdesk --server runs the screen-capture/input daemon; it does not open
-  # a GUI window itself. We manage it as a systemd --user service so it
-  # restarts automatically and doesn't require a terminal to stay open.
-  local rd_service_dir="$HOME/.config/systemd/user"
-  mkdir -p "$rd_service_dir"
-  cat > "$rd_service_dir/rustdesk.service" <<'UNIT'
-[Unit]
-Description=RustDesk server daemon (direct IP mode)
-After=graphical-session.target
+  sudo systemctl restart xfce4-session.service \
+    && log_ok "XFCE4 session started" \
+    || { log_warn "XFCE4 failed — check: journalctl -u xfce4-session"; _track_failed "xfce4"; }
 
-[Service]
-ExecStart=/usr/bin/rustdesk --server
-Restart=on-failure
-RestartSec=5
-Environment=DISPLAY=:0
-
-[Install]
-WantedBy=default.target
-UNIT
-
-  systemctl --user daemon-reload
-  systemctl --user enable rustdesk
-  systemctl --user start rustdesk \
+  sudo systemctl restart rustdesk.service \
     && log_ok "RustDesk daemon started" \
-    || { log_warn "RustDesk daemon failed to start"; _track_failed "rustdesk daemon"; return 1; }
+    || { log_warn "RustDesk failed — check: journalctl -u rustdesk"; _track_failed "rustdesk daemon"; }
 
   # ---- Print connection info -----------------------------------------------
   local ts_ip
@@ -570,14 +610,19 @@ cmd_gui_stop() {
   log_section "GUI stop"
 
   log_info "Stopping RustDesk daemon..."
-  systemctl --user stop rustdesk 2>/dev/null \
+  sudo systemctl stop rustdesk 2>/dev/null \
     && log_ok "RustDesk daemon stopped" \
     || log_info "RustDesk daemon: not running"
 
-  log_info "Stopping GDM3..."
-  sudo systemctl stop gdm3 2>/dev/null \
-    && log_ok "GDM3 stopped" \
-    || log_info "GDM3: not running"
+  log_info "Stopping XFCE4 session..."
+  sudo systemctl stop xfce4-session 2>/dev/null \
+    && log_ok "XFCE4 session stopped" \
+    || log_info "XFCE4 session: not running"
+
+  log_info "Stopping Xorg..."
+  sudo systemctl stop "xorg-:0" 2>/dev/null \
+    && log_ok "Xorg stopped" \
+    || log_info "Xorg: not running"
 }
 
 cmd_check() {
@@ -646,11 +691,11 @@ cmd_check() {
     _chk "VirtIO GPU (/dev/dri/card0)" ok
     command -v rustdesk &>/dev/null \
       && _chk "rustdesk installed" ok || _chk "rustdesk installed" fail
-    dpkg -l gdm3 &>/dev/null \
-      && _chk "gdm3 installed" ok || _chk "gdm3 installed" fail
-    systemctl is-active gdm3 &>/dev/null \
-      && _chk "gdm3 running" ok || log_info "gdm3: not running (run: rigging gui)"
-    systemctl --user is-active rustdesk &>/dev/null \
+    systemctl is-active "xorg-:0" &>/dev/null \
+      && _chk "Xorg running" ok || log_info "Xorg: not running (run: rigging gui)"
+    systemctl is-active xfce4-session &>/dev/null \
+      && _chk "XFCE4 session running" ok || log_info "XFCE4: not running (run: rigging gui)"
+    systemctl is-active rustdesk &>/dev/null \
       && _chk "rustdesk daemon" ok || log_info "rustdesk daemon: not running (run: rigging gui)"
     DISPLAY=:0 xdpyinfo &>/dev/null \
       && _chk "X display :0 reachable" ok || log_info "X display :0: not reachable (run: rigging gui)"
