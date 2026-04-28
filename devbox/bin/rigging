@@ -518,32 +518,6 @@ UNIT
   sudo systemctl daemon-reload
   log_ok "systemd services written (xorg-display, xfce4-session, rustdesk)"
 
-  # ---- Configure RustDesk for direct IP mode with permanent password ------
-  local rd_config_dir="${HOME}/.config/rustdesk"
-  local rd_config="${rd_config_dir}/RustDesk2.toml"
-  mkdir -p "$rd_config_dir"
-
-  # Generate a permanent password once; preserve it on re-runs.
-  local rd_password
-  if [[ -f "$rd_config" ]] && grep -q "^permanent_password" "$rd_config" 2>/dev/null; then
-    rd_password=$(grep "^permanent_password" "$rd_config" | cut -d'"' -f2)
-    log_info "RustDesk: reusing existing permanent password"
-  else
-    rd_password=$(head -c 128 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)
-    log_info "RustDesk: generating new permanent password"
-  fi
-
-  cat > "$rd_config" <<EOF
-[options]
-direct-server = "Y"
-direct-access-port = "21118"
-verification-method = "use-permanent-password"
-approve-mode = "password"
-permanent_password = "${rd_password}"
-whitelist = "100.64.0.0/10"
-EOF
-  log_ok "RustDesk configured (direct IP, port 21118, Tailscale whitelist)"
-
   # ---- Enable and start all three services --------------------------------
   log_info "Enabling and starting GUI services..."
   sudo systemctl enable xorg-display.service xfce4-session.service rustdesk.service \
@@ -579,6 +553,38 @@ EOF
     && log_ok "RustDesk daemon started" \
     || { log_warn "RustDesk failed — check: journalctl -u rustdesk"; _track_failed "rustdesk daemon"; }
 
+  # ---- Configure RustDesk via CLI (requires running daemon) ---------------
+  # RustDesk stores the permanent password hashed — writing plaintext to the
+  # TOML file does not work. The --password and --option flags communicate
+  # via IPC to the running daemon which hashes and persists the values.
+  log_info "Configuring RustDesk options..."
+  local rd_password_file="${HOME}/.config/rustdesk/.gui_password"
+
+  # Generate a password once; store the plaintext separately so we can show it.
+  local rd_password
+  if [[ -f "$rd_password_file" ]]; then
+    rd_password=$(cat "$rd_password_file")
+    log_info "RustDesk: reusing existing password"
+  else
+    rd_password=$(head -c 128 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16 || true)
+    mkdir -p "$(dirname "$rd_password_file")"
+    echo "$rd_password" > "$rd_password_file"
+    chmod 600 "$rd_password_file"
+    log_info "RustDesk: generated new password"
+  fi
+
+  # Wait a moment for the RustDesk daemon IPC socket to be ready
+  sleep 2
+
+  # Set options via CLI → IPC to running daemon
+  sudo -u "${USER}" rustdesk --password "$rd_password" || log_warn "Failed to set RustDesk password"
+  sudo -u "${USER}" rustdesk --option direct-server Y || true
+  sudo -u "${USER}" rustdesk --option direct-access-port 21118 || true
+  sudo -u "${USER}" rustdesk --option verification-method use-permanent-password || true
+  sudo -u "${USER}" rustdesk --option approve-mode password || true
+  sudo -u "${USER}" rustdesk --option whitelist 100.64.0.0/10 || true
+  log_ok "RustDesk configured (direct IP, port 21118, Tailscale whitelist)"
+
   # ---- Print connection info -----------------------------------------------
   local ts_ip
   ts_ip=$(tailscale ip -4 2>/dev/null || true)
@@ -602,7 +608,7 @@ EOF
   log_dim "  │    4. Check 'Remember password' so you only type it once"
   log_dim "  └───────────────────────────────────────────────────────────┘"
   echo
-  log_dim "  Password is also stored at: $rd_config"
+  log_dim "  Password is also stored at: $rd_password_file"
   log_dim "  To stop the GUI:  rigging gui stop"
   log_dim "  To check status:  rigging check"
   echo
@@ -702,10 +708,10 @@ cmd_check() {
     DISPLAY=:0 xdpyinfo &>/dev/null \
       && _chk "X display :0 reachable" ok || log_info "X display :0: not reachable (run: rigging gui)"
 
-    local ts_ip rd_config rd_password
+    local ts_ip rd_password
     ts_ip=$(tailscale ip -4 2>/dev/null || true)
-    rd_config="$HOME/.config/rustdesk/RustDesk2.toml"
-    rd_password=$(grep "^permanent_password" "$rd_config" 2>/dev/null | cut -d'"' -f2 || echo "(not set — run: rigging gui)")
+    local rd_pw_file="$HOME/.config/rustdesk/.gui_password"
+    rd_password=$(cat "$rd_pw_file" 2>/dev/null || echo "(not set — run: rigging gui)")
     echo
     log_dim "  ┌─ RustDesk connection ─────────────────────────────────────┐"
     if [[ -n "$ts_ip" ]]; then
