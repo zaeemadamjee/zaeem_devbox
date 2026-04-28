@@ -553,38 +553,47 @@ UNIT
     && log_ok "RustDesk daemon started" \
     || { log_warn "RustDesk failed — check: journalctl -u rustdesk"; _track_failed "rustdesk daemon"; }
 
-  # ---- Configure RustDesk via CLI (requires running daemon) ---------------
+  # ---- Configure RustDesk via CLI (requires root + running daemon) ---------
   # RustDesk stores the permanent password hashed — writing plaintext to the
   # TOML file does not work. The --password and --option flags communicate
   # via IPC to the running daemon which hashes and persists the values.
   log_info "Configuring RustDesk options..."
-  local rd_password_file="${HOME}/.config/rustdesk/.gui_password"
 
-  # Generate a password once; store the plaintext separately so we can show it.
-  local rd_password
-  if [[ -f "$rd_password_file" ]]; then
-    rd_password=$(cat "$rd_password_file")
-    log_info "RustDesk: reusing existing password"
-  else
-    rd_password=$(head -c 128 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16 || true)
-    mkdir -p "$(dirname "$rd_password_file")"
-    echo "$rd_password" > "$rd_password_file"
-    chmod 600 "$rd_password_file"
-    log_info "RustDesk: generated new password"
-  fi
-
-  # Wait a moment for the RustDesk daemon IPC socket to be ready
-  sleep 2
-
-  # Set password and options via CLI → IPC to running daemon.
-  # RustDesk requires root for --password (checked with is_root() in source).
-  # --option also requires root when the package is "installed" (via .deb).
-  sudo rustdesk --password "$rd_password" || log_warn "Failed to set RustDesk password"
+  # Set options first (these don't need the daemon to be ready)
   sudo rustdesk --option direct-server Y || true
   sudo rustdesk --option direct-access-port 21118 || true
   sudo rustdesk --option verification-method use-permanent-password || true
   sudo rustdesk --option approve-mode password || true
   sudo rustdesk --option whitelist 100.64.0.0/10 || true
+
+  # Generate a password once; store the plaintext so we can display it later.
+  # Always re-apply the password to the daemon (idempotent — hashing the same
+  # value again is fine).
+  local rd_password_file="${HOME}/.config/rustdesk/.gui_password"
+  local rd_password
+  if [[ -f "$rd_password_file" ]] && [[ -s "$rd_password_file" ]]; then
+    rd_password=$(cat "$rd_password_file")
+    log_info "RustDesk: reusing existing password"
+  else
+    rd_password=$(head -c 128 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16 || true)
+    mkdir -p "$(dirname "$rd_password_file")"
+    printf '%s' "$rd_password" > "$rd_password_file"
+    chmod 600 "$rd_password_file"
+    log_info "RustDesk: generated new password"
+  fi
+
+  # Set the password via IPC — requires root. Verify it prints "Done!".
+  local pw_result
+  pw_result=$(sudo rustdesk --password "$rd_password" 2>&1) || true
+  if [[ "$pw_result" == *"Done"* ]]; then
+    log_ok "RustDesk password set"
+  else
+    log_warn "RustDesk password may not have been set: $pw_result"
+    _track_failed "rustdesk password"
+  fi
+
+  # Restart RustDesk so it picks up all config changes
+  sudo systemctl restart rustdesk.service || true
   log_ok "RustDesk configured (direct IP, port 21118, Tailscale whitelist)"
 
   # ---- Print connection info -----------------------------------------------
