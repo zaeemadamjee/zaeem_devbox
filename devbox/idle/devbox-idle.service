@@ -3,4 +3,4 @@ Description=Idle shutdown check for dev box
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/idle-check.sh
+ExecStart=/usr/local/bin/idle-check
