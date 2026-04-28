@@ -426,6 +426,37 @@ cmd_gui() {
     return 1
   fi
 
+  # ---- Install Google Chrome -----------------------------------------------
+  if command -v google-chrome &>/dev/null; then
+    log_info "Google Chrome: already installed"
+  else
+    log_info "Google Chrome: downloading..."
+    local chrome_deb
+    chrome_deb="$(mktemp --suffix=.deb)"
+    if curl -fsSL -o "$chrome_deb" "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"; then
+      DEBIAN_FRONTEND=noninteractive sudo apt-get install -y "$chrome_deb" \
+        && log_ok "Google Chrome" \
+        || { log_warn "Chrome install failed"; _track_failed "chrome"; }
+    else
+      log_warn "Chrome download failed"
+      _track_failed "chrome download"
+    fi
+    rm -f "$chrome_deb"
+  fi
+
+  # ---- Install Ghostty terminal -------------------------------------------
+  if command -v ghostty &>/dev/null; then
+    log_info "Ghostty: already installed"
+  else
+    log_info "Ghostty: installing via ghostty-ubuntu..."
+    if /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mkasberg/ghostty-ubuntu/HEAD/install.sh)"; then
+      log_ok "Ghostty"
+    else
+      log_warn "Ghostty install failed"
+      _track_failed "ghostty"
+    fi
+  fi
+
   # ---- Install RustDesk from GitHub releases ------------------------------
   # RustDesk publishes .deb packages to GitHub releases only (no apt repo).
   # The -sciter variant has fewer dependencies (no webview/pipewire) which is
