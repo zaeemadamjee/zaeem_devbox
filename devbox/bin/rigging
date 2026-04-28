@@ -13,8 +13,9 @@
 #   tailscale    Install Tailscale daemon + authenticate
 #   idle         Systemd idle timer
 #   repos        Clone workspace repos from GCE metadata
-#   gui          Install GUI stack (GNOME + RustDesk) and start it
-#   gui stop     Stop the GUI session (Xorg + GNOME + RustDesk daemon)
+#   gui          Install GUI stack (XFCE4, RustDesk, Chrome, Ghostty)
+#   gui start    Start the GUI session (Xorg + XFCE4 + RustDesk)
+#   gui stop     Stop the GUI session
 #   check        Print ✓/✗ status without modifying anything
 #   help         Show this message
 #
@@ -388,7 +389,7 @@ cmd_repos() {
 }
 
 cmd_gui() {
-  log_section "GUI stack"
+  log_section "GUI install"
 
   # ---- Verify VirtIO GPU device is present --------------------------------
   if [[ ! -e /dev/dri/card0 ]]; then
@@ -402,10 +403,7 @@ cmd_gui() {
   log_ok "VirtIO GPU present (/dev/dri/card0)"
 
   # ---- Install apt packages -----------------------------------------------
-  # GDM3/GNOME is unreliable headless — it manages physical display seats and
-  # won't create a usable X session on a VM without one. Instead we use:
-  #   Xorg (system service, no display manager) + XFCE4 (lightweight, headless-friendly)
-  # This is the standard pattern for headless X remote desktop servers.
+  # Xorg (system service, no display manager) + XFCE4 (lightweight, headless-friendly).
   local gui_pkgs=(
     xorg
     xfce4
@@ -414,8 +412,6 @@ cmd_gui() {
     firefox
   )
 
-  # Stream output directly — X + XFCE deps can be 300+ MB and take several
-  # minutes. Hiding output behind a log redirect makes it look frozen.
   log_info "Installing GUI packages via apt (this takes several minutes — output shown below)..."
   if DEBIAN_FRONTEND=noninteractive DEBIAN_PRIORITY=critical \
       sudo -E apt-get install -y "${gui_pkgs[@]}"; then
@@ -458,9 +454,6 @@ cmd_gui() {
   fi
 
   # ---- Install RustDesk from GitHub releases ------------------------------
-  # RustDesk publishes .deb packages to GitHub releases only (no apt repo).
-  # The -sciter variant has fewer dependencies (no webview/pipewire) which is
-  # better suited for a headless server.
   if command -v rustdesk &>/dev/null; then
     log_info "RustDesk: already installed"
   else
@@ -483,10 +476,7 @@ cmd_gui() {
     rm -f "$rd_deb"
   fi
 
-  # ---- Write Xorg system service ------------------------------------------
-  # Starts Xorg on :0 using the VirtIO GPU (modesetting driver). Runs as a
-  # system service so it starts on boot and doesn't require a logged-in user.
-  # Unit named "xorg-display" (no colon) to avoid systemd escaping issues.
+  # ---- Write systemd service units ----------------------------------------
   sudo tee /etc/systemd/system/xorg-display.service > /dev/null <<'UNIT'
 [Unit]
 Description=Xorg server on display :0
@@ -502,9 +492,6 @@ RestartSec=3
 WantedBy=multi-user.target
 UNIT
 
-  # ---- Write XFCE4 session service ----------------------------------------
-  # Starts an XFCE4 desktop session on display :0 as the zaeem user, after
-  # Xorg is ready. Uses dbus-launch so apps can communicate via D-Bus.
   sudo tee /etc/systemd/system/xfce4-session.service > /dev/null <<UNIT
 [Unit]
 Description=XFCE4 desktop session on display :0
@@ -524,9 +511,6 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
-  # ---- Write RustDesk system service --------------------------------------
-  # Runs RustDesk in server mode as the zaeem user, capturing display :0.
-  # System service (not user service) so it works from SSH without linger.
   sudo tee /etc/systemd/system/rustdesk.service > /dev/null <<UNIT
 [Unit]
 Description=RustDesk server daemon (direct IP mode)
@@ -547,19 +531,51 @@ WantedBy=multi-user.target
 UNIT
 
   sudo systemctl daemon-reload
-  log_ok "systemd services written (xorg-display, xfce4-session, rustdesk)"
+  sudo systemctl enable xorg-display.service xfce4-session.service rustdesk.service
+  log_ok "systemd services written and enabled"
 
-  # ---- Enable and start all three services --------------------------------
-  log_info "Enabling and starting GUI services..."
-  sudo systemctl enable xorg-display.service xfce4-session.service rustdesk.service \
-    && log_ok "Services enabled" \
-    || { log_warn "systemctl enable failed"; _track_failed "systemctl enable"; return 1; }
+  # ---- Configure RustDesk via CLI (requires root) --------------------------
+  log_info "Configuring RustDesk options..."
+  sudo rustdesk --option direct-server Y || true
+  sudo rustdesk --option direct-access-port 21118 || true
+  sudo rustdesk --option verification-method use-permanent-password || true
+  sudo rustdesk --option approve-mode password || true
+  sudo rustdesk --option whitelist 100.64.0.0/10 || true
 
+  # Generate a password once; store the plaintext so we can display it later.
+  local rd_password_file="${HOME}/.config/rustdesk/.gui_password"
+  local rd_password
+  if [[ -f "$rd_password_file" ]] && [[ -s "$rd_password_file" ]]; then
+    rd_password=$(cat "$rd_password_file")
+    log_info "RustDesk: reusing existing password"
+  else
+    rd_password=$(head -c 128 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16 || true)
+    mkdir -p "$(dirname "$rd_password_file")"
+    printf '%s' "$rd_password" > "$rd_password_file"
+    chmod 600 "$rd_password_file"
+    log_info "RustDesk: generated new password"
+  fi
+
+  local pw_result
+  pw_result=$(sudo rustdesk --password "$rd_password" 2>&1) || true
+  if [[ "$pw_result" == *"Done"* ]]; then
+    log_ok "RustDesk password set"
+  else
+    log_warn "RustDesk password may not have been set: $pw_result"
+    _track_failed "rustdesk password"
+  fi
+
+  log_ok "GUI install complete — run 'rigging gui start' to start the session"
+}
+
+cmd_gui_start() {
+  log_section "GUI start"
+
+  # ---- Start all three services -------------------------------------------
   sudo systemctl restart xorg-display.service \
     && log_ok "Xorg started" \
     || { log_warn "Xorg failed to start — check: journalctl -u xorg-display"; _track_failed "xorg"; return 1; }
 
-  # Wait for Xorg to be ready before starting the session
   local xorg_ready=false
   for i in {1..15}; do
     if DISPLAY=:0 xdpyinfo &>/dev/null 2>&1; then
@@ -584,55 +600,14 @@ UNIT
     && log_ok "RustDesk daemon started" \
     || { log_warn "RustDesk failed — check: journalctl -u rustdesk"; _track_failed "rustdesk daemon"; }
 
-  # ---- Configure RustDesk via CLI (requires root + running daemon) ---------
-  # RustDesk stores the permanent password hashed — writing plaintext to the
-  # TOML file does not work. The --password and --option flags communicate
-  # via IPC to the running daemon which hashes and persists the values.
-  log_info "Configuring RustDesk options..."
-
-  # Set options first (these don't need the daemon to be ready)
-  sudo rustdesk --option direct-server Y || true
-  sudo rustdesk --option direct-access-port 21118 || true
-  sudo rustdesk --option verification-method use-permanent-password || true
-  sudo rustdesk --option approve-mode password || true
-  sudo rustdesk --option whitelist 100.64.0.0/10 || true
-
-  # Generate a password once; store the plaintext so we can display it later.
-  # Always re-apply the password to the daemon (idempotent — hashing the same
-  # value again is fine).
-  local rd_password_file="${HOME}/.config/rustdesk/.gui_password"
-  local rd_password
-  if [[ -f "$rd_password_file" ]] && [[ -s "$rd_password_file" ]]; then
-    rd_password=$(cat "$rd_password_file")
-    log_info "RustDesk: reusing existing password"
-  else
-    rd_password=$(head -c 128 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16 || true)
-    mkdir -p "$(dirname "$rd_password_file")"
-    printf '%s' "$rd_password" > "$rd_password_file"
-    chmod 600 "$rd_password_file"
-    log_info "RustDesk: generated new password"
-  fi
-
-  # Set the password via IPC — requires root. Verify it prints "Done!".
-  local pw_result
-  pw_result=$(sudo rustdesk --password "$rd_password" 2>&1) || true
-  if [[ "$pw_result" == *"Done"* ]]; then
-    log_ok "RustDesk password set"
-  else
-    log_warn "RustDesk password may not have been set: $pw_result"
-    _track_failed "rustdesk password"
-  fi
-
-  # Restart RustDesk so it picks up all config changes
-  sudo systemctl restart rustdesk.service || true
-  log_ok "RustDesk configured (direct IP, port 21118, Tailscale whitelist)"
-
   # ---- Print connection info -----------------------------------------------
-  local ts_ip
+  local ts_ip rd_password_file rd_password
   ts_ip=$(tailscale ip -4 2>/dev/null || true)
+  rd_password_file="${HOME}/.config/rustdesk/.gui_password"
+  rd_password=$(cat "$rd_password_file" 2>/dev/null || echo "(not set — run: rigging gui)")
 
   echo
-  log_ok "GUI stack ready"
+  log_ok "GUI session ready"
   echo
   log_dim "  ┌─ Connection details ──────────────────────────────────────┐"
   if [[ -n "$ts_ip" ]]; then
@@ -793,6 +768,7 @@ cmd_all() {
   cmd_idle
   cmd_repos
   cmd_gui
+  cmd_gui_start
   _secrets_check
   _summary
 }
@@ -814,8 +790,9 @@ cmd_help() {
     tailscale    Install Tailscale daemon + authenticate
     idle         Systemd idle timer
     repos        Clone workspace repos from GCE metadata
-    gui          Install GUI stack (GNOME + RustDesk) and start it
-    gui stop     Stop the GUI session (Xorg + GNOME + RustDesk daemon)
+    gui          Install GUI stack (XFCE4, RustDesk, Chrome, Ghostty)
+    gui start    Start the GUI session (Xorg + XFCE4 + RustDesk)
+    gui stop     Stop the GUI session
     check        Print ✓/✗ status without modifying anything
     help         Show this message
 
@@ -874,11 +851,12 @@ main() {
     gui)
       local subcmd="${1:-}"
       case "$subcmd" in
-        stop) log_banner "rigging gui stop"; cmd_gui_stop; _summary ;;
-        "")   log_banner "rigging gui";      cmd_gui;      _summary ;;
+        start) log_banner "rigging gui start"; cmd_gui_start; _summary ;;
+        stop)  log_banner "rigging gui stop";  cmd_gui_stop;  _summary ;;
+        "")    log_banner "rigging gui";       cmd_gui;       _summary ;;
         *)
           log_error "Unknown gui subcommand: $subcmd"
-          log_dim "Usage: rigging gui [stop]"
+          log_dim "Usage: rigging gui [start|stop]"
           exit 1
           ;;
       esac
