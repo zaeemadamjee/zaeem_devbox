@@ -18,6 +18,10 @@ and whether the change moves the codebase in a good direction. Be direct, be
 concise, and don't waste the author's time on trivia when there are substantive
 things to discuss.
 
+Calibrate severity to the execution context. A missing null check in a
+one-off script is different from one in a hot request path. Factor in how the
+code is actually called, not just what it looks like in isolation.
+
 ---
 
 ## Read-Only Mode
@@ -64,6 +68,12 @@ Extract:
 - File list, additions/deletions counts
 - Labels, milestone, linked issues
 
+Also check:
+- Does the PR description accurately describe what the diff actually does?
+  Flag empty, vague, or misleading descriptions in the review.
+- Read existing review comments on GitHub (`gh api repos/{owner}/{repo}/pulls/{number}/comments`).
+  Note prior feedback. Do not duplicate it. Flag if prior feedback was ignored.
+
 ---
 
 ## 2. Classify PR Type
@@ -102,6 +112,11 @@ Read the full diff. For large PRs (>1000 lines), prioritize:
 2. Files with the most changes
 3. Config/infra changes
 4. Test changes last
+
+For multi-commit PRs, also read the commit log (`gh pr view <number> --json commits`).
+If commits tell a meaningful story (incremental refactor, then feature, then tests),
+note this in the Executive Summary. Understand the author's intent through the
+commit sequence, not just the flat diff.
 
 ---
 
@@ -182,6 +197,34 @@ omit sections.
 
 ---
 
+## What to Look For
+
+When analyzing the diff across all sections, actively check for these factors.
+Do not add new sections for them — fold findings into the appropriate existing
+section (Security & Correctness, Improvements, Action Items, etc.):
+
+- **Error path coverage** — Trace what happens when things fail. Network errors,
+  null returns, timeouts, partial failures. Most bugs live in the unhappy path.
+- **Concurrency & shared state** — Changes touching caches, queues, locks, or
+  concurrent code paths. Evaluate race conditions, deadlocks, ordering assumptions.
+- **Migration & breaking changes** — Public API changes, DB schema alterations,
+  config format changes, wire protocol updates. These deserve higher severity.
+- **Revert complexity** — How easy is this to undo? Additive changes are trivially
+  revertible; data migrations are not. Note this in the File Heatmap or Action Items
+  when the risk is high.
+- **Feature flag absence** — New user-facing behavior without a feature flag or
+  gradual rollout mechanism. Flag this for high-risk changes.
+- **Deployment dependencies** — Does this PR require env vars set, migrations run,
+  services restarted, or caches cleared at deploy time? Flag if undocumented.
+- **New TODO/FIXME/HACK comments** — Flag any deferred decisions introduced by the
+  PR that should be tracked as issues.
+- **PR description vs diff mismatch** — If the stated intent doesn't match the
+  actual changes, call it out.
+- **Confidence level** — When a finding is uncertain, say so (certain / likely /
+  possible). Don't present speculation with the same weight as confirmed bugs.
+
+---
+
 ## Output Format
 
 When referencing code throughout the review, always use the pattern
@@ -213,6 +256,7 @@ Reviewed the diff and <N> neighboring files in `src/module/`. Checked CI status 
 - **Notion:** [Design Doc title](link) _(or: no relevant pages found)_
 - **Slack:** #channel — [thread title](link) _(or: unavailable, no MCP configured)_
 - **Related PRs:** #138, #140 touch the same files _(or: none found)_
+- **Prior reviews:** 3 comments from @reviewer, all addressed _(or: no prior reviews)_
 
 > **Tools unavailable:** <tool1>, <tool2>
 
@@ -235,6 +279,8 @@ Rank every changed file from most risky to least risky. Assess risk based on:
 - **Logic changes in critical paths** — auth, payments, data mutations, security boundaries.
 - **Blast radius** — how many other files import or depend on this file.
 - **Complexity of the change** — new branching logic, error handling changes, state mutations.
+- **Revert complexity** — can this file's changes be undone cleanly, or do they
+  involve data migrations, schema changes, or external side effects?
 
 Risk levels are **absolute, not relative.** If every file in the PR is a safe
 change, every row should be 🟢. Do not inflate risk to fill the scale.
@@ -269,6 +315,8 @@ vulnerabilities — logic that is actually wrong, data that can be lost, or an
 attack surface that is actually exploitable. Use 🟡 Medium and 🟢 Low for
 things worth mentioning that don't pose a current threat (e.g., a missing
 validation that can't be reached yet, a theoretical race condition).
+
+When a finding is uncertain, indicate confidence (certain / likely / possible).
 
 | Severity | Finding |
 |----------|---------|
@@ -313,6 +361,7 @@ followed or broken and where the canonical example lives.
 Check the following:
 
 - Is every new code path covered by a test?
+- Are error/failure paths tested, not just the happy path?
 - Are there old test paths that are now dead code and should be deleted?
 - Check CI status: `gh pr checks <number>`. Report whether tests are passing,
   failing, or pending on GitHub.
@@ -375,7 +424,7 @@ can act on in the next revision.
 | 4 | 🎨 Style | Brief actionable description |
 | 5 | 💡 Nit | Brief actionable description |
 
-_Type labels: 🔒 Security, 🐛 Bug, 🧪 Test, 🎨 Style, 💡 Nit, 📐 Architecture, 📝 Docs_
+_Type labels: 🔒 Security, 🐛 Bug, 🧪 Test, 🎨 Style, 💡 Nit, 📐 Architecture, 📝 Docs, 🚀 Deploy_
 
 ````
 
@@ -399,3 +448,5 @@ Use these consistently across all sections:
 - **Be balanced.** Always include strengths. A review with only criticisms is incomplete.
 - **Link context.** Every reference to a Linear issue, Notion doc, or Slack thread must be a clickable link.
 - **Stay read-only.** Do not modify anything. Gather, analyze, report.
+- **Don't duplicate.** If a prior reviewer already flagged something, don't repeat it. Note that it was raised and whether it was addressed.
+- **State confidence.** When uncertain about a finding, say so. Don't present speculation as fact.
