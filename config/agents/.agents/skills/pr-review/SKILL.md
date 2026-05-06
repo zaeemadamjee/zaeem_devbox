@@ -76,8 +76,8 @@ the title, labels, branch name, and file list:
 | **Feature** | New files, new endpoints, `feat/` branch | Security, Test Analysis, Acceptance Criteria |
 | **Bugfix** | `fix/` branch, issue reference, small diff | Security & Correctness, Test Analysis |
 | **Refactor** | Renames, moves, no behavior change | Style & Consistency, Before/After Structure |
-| **Config / Infra** | CI, Dockerfile, terraform, env vars | Security, Blast Radius |
-| **Dependency** | lockfile changes, version bumps | Security, Blast Radius |
+| **Config / Infra** | CI, Dockerfile, terraform, env vars | Security, File Heatmap |
+| **Dependency** | lockfile changes, version bumps | Security, File Heatmap |
 | **Docs** | Markdown, comments only | Style & Consistency, Strengths |
 
 State the detected type in the metadata table. Use it to weight your attention
@@ -115,7 +115,7 @@ Before forming opinions, gather context:
 - Search for related patterns in the codebase (e.g., if a new API endpoint is added,
   find how existing endpoints are structured).
 - **Trace downstream consumers:** For each modified file, check what imports or
-  depends on it. Note these in the Blast Radius section of the output.
+  depends on it. Note these in the File Heatmap.
 
 ---
 
@@ -187,11 +187,14 @@ omit sections.
 When referencing code throughout the review, always use the pattern
 `path/to/file.ts:42` so the reader can navigate directly to the source.
 
+Get the repo name from the git remote or `gh repo view --json nameWithOwner`.
+
 ````markdown
-# PR Review: #<number> — <title>
+# <owner>/<repo> — PR #<number>: <title>
 
 | | |
 |---|---|
+| **Repo** | `<owner>/<repo>` |
 | **Branch** | `<head>` → `<base>` |
 | **Author** | @<username> |
 | **Type** | Feature / Bugfix / Refactor / Config / Dependency / Docs |
@@ -202,18 +205,16 @@ When referencing code throughout the review, always use the pattern
 
 ## Review Context
 
-Briefly list what you did to prepare this review so the reader knows what
-informed your analysis. Use a tight bulleted list. Include:
+One sentence on what you reviewed, then bullets for specific sources. Keep it tight.
 
-- Which files in the codebase you read beyond the diff itself.
-- Whether you checked out or compared against related PRs, and which ones.
-- Whether you ran or inspected tests, and what the result was.
-- Which Linear issues you found and linked (or that you found none).
-- Which Notion pages you reviewed (or that none were found).
-- Which Slack threads you read (or that Slack was unavailable).
-- Any other sources (GitHub PR comments, commit history, etc.).
+Reviewed the diff and <N> neighboring files in `src/module/`. Checked CI status on GitHub.
 
-> **Tools unavailable:** <tool1>, <tool2> — context from these sources could not be gathered.
+- **Linear:** [ENG-123 — Issue title](link) _(or: no matching issue found)_
+- **Notion:** [Design Doc title](link) _(or: no relevant pages found)_
+- **Slack:** #channel — [thread title](link) _(or: unavailable, no MCP configured)_
+- **Related PRs:** #138, #140 touch the same files _(or: none found)_
+
+> **Tools unavailable:** <tool1>, <tool2>
 
 _Only include the tools-unavailable notice if any tools were actually missing. Omit it entirely otherwise._
 
@@ -229,11 +230,19 @@ _Only include the tools-unavailable notice if any tools were actually missing. O
 
 ## File Heatmap
 
-A quick-glance risk assessment of every changed file.
+Rank every changed file from most risky to least risky. Assess risk based on:
 
-| File | Risk | Notes |
-|------|------|-------|
-| `path/to/file.ts` | 🔴 Critical / 🟠 Risky / 🟡 Moderate / 🟢 Safe | One-line reason |
+- **Logic changes in critical paths** — auth, payments, data mutations, security boundaries.
+- **Blast radius** — how many other files import or depend on this file.
+- **Complexity of the change** — new branching logic, error handling changes, state mutations.
+
+Risk levels are **absolute, not relative.** If every file in the PR is a safe
+change, every row should be 🟢. Do not inflate risk to fill the scale.
+
+| Risk | File | Consumers | Notes |
+|------|------|-----------|-------|
+| 🔴 Critical | `path/to/file.ts` | `a.ts`, `b.ts`, `c.ts` | One-line reason |
+| 🟢 Safe | `path/to/other.ts` | `tests/other.test.ts` | One-line reason |
 
 ---
 
@@ -254,6 +263,12 @@ found on linked issue." If no issue was found at all, write "No linked issue."_
 _For refactor PRs, replace this section with **Before / After Structure** —
 describe the architectural shape of the code before and after the change.
 Focus on module boundaries, naming, and data flow, not line-by-line diffs._
+
+Reserve 🔴 Critical and 🟠 High for **real** correctness bugs or security
+vulnerabilities — logic that is actually wrong, data that can be lost, or an
+attack surface that is actually exploitable. Use 🟡 Medium and 🟢 Low for
+things worth mentioning that don't pose a current threat (e.g., a missing
+validation that can't be reached yet, a theoretical race condition).
 
 | Severity | Finding |
 |----------|---------|
@@ -295,12 +310,12 @@ followed or broken and where the canonical example lives.
 
 ## Test Analysis
 
-Evaluate the PR's test coverage and strategy.
+Check the following:
 
-- Are the new/changed code paths tested?
-- Are edge cases covered (empty input, error paths, boundary conditions)?
-- Were existing tests updated to reflect the changes, or are any now stale?
-- Does the test approach match the patterns used elsewhere in the codebase?
+- Is every new code path covered by a test?
+- Are there old test paths that are now dead code and should be deleted?
+- Check CI status: `gh pr checks <number>`. Report whether tests are passing,
+  failing, or pending on GitHub.
 
 | Severity | Finding |
 |----------|---------|
@@ -314,20 +329,6 @@ Evaluate the PR's test coverage and strategy.
 What is missing or could be stronger, and why it matters.
 
 </details>
-
----
-
-## Blast Radius
-
-List the downstream consumers of the changed code. Who imports, calls, or
-depends on the modified files or exports?
-
-| Changed file | Consumed by |
-|--------------|-------------|
-| `path/to/file.ts` | `other/module.ts`, `tests/file.test.ts` |
-
-Brief assessment: is the blast radius contained, or does this change ripple
-through the codebase in ways the author may not have considered?
 
 ---
 
@@ -358,6 +359,24 @@ What could be better, why, and a concrete suggestion.
 
 </details>
 
+---
+
+## Action Items
+
+The 3-10 most important things to address, distilled from all sections above.
+Order by importance. Every item should be actionable — something the author
+can act on in the next revision.
+
+| # | Type | Item |
+|---|------|------|
+| 1 | 🔒 Security | Brief actionable description |
+| 2 | 🐛 Bug | Brief actionable description |
+| 3 | 🧪 Test | Brief actionable description |
+| 4 | 🎨 Style | Brief actionable description |
+| 5 | 💡 Nit | Brief actionable description |
+
+_Type labels: 🔒 Security, 🐛 Bug, 🧪 Test, 🎨 Style, 💡 Nit, 📐 Architecture, 📝 Docs_
+
 ````
 
 ### Severity/Priority Levels
@@ -367,8 +386,8 @@ Use these consistently across all sections:
 | Emoji | Level | Meaning |
 |-------|-------|---------|
 | `🔴` | Critical | Blocks merge — security hole, data loss, broken functionality |
-| `🟠` | High | Should fix before merge — correctness risk, significant concern |
-| `🟡` | Medium | Worth addressing — style issue, minor risk, tech debt |
+| `🟠` | High | Should fix before merge — actual correctness risk or security concern |
+| `🟡` | Medium | Worth mentioning — no current threat but could become one |
 | `🟢` | Low | Nitpick — optional improvement, stylistic preference |
 
 ---
