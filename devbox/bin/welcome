@@ -69,6 +69,17 @@ fi
 # ---------------------------------------------------------------------------
 # Attach to tmux
 # ---------------------------------------------------------------------------
-if [[ -z "$TMUX" ]] && [[ -t 0 ]] && command -v tmux &>/dev/null; then
-  exec tmux new-session -A -s main
+if [[ -z "$TMUX" ]] && [[ -t 0 ]]; then
+  # Homebrew is not yet in PATH here (it's initialized later in .zshrc).
+  # Init it now so we find the Homebrew tmux rather than a stale system one.
+  _brew_prefix="/home/linuxbrew/.linuxbrew"
+  [[ -f "${_brew_prefix}/bin/brew" ]] && eval "$("${_brew_prefix}/bin/brew" shellenv)" 2>/dev/null || true
+
+  _tmux_bin=$(command -v tmux 2>/dev/null || true)
+  if [[ -n "$_tmux_bin" ]]; then
+    log_dim "Attaching tmux ($_tmux_bin $(tmux -V 2>/dev/null | cut -d' ' -f2))..."
+    exec tmux new-session -A -s main
+  else
+    log_warn "tmux not found — dropping to shell (run: rigging install)"
+  fi
 fi
