@@ -5,7 +5,7 @@
 
 export WELCOME_SHOWN=1
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 
 # shellcheck source=../../lib/log.sh
 source "$REPO/lib/log.sh"
