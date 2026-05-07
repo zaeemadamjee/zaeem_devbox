@@ -653,6 +653,17 @@ cmd_check() {
     fi
   }
 
+  # Augment PATH so language checks find binaries installed outside Homebrew
+  # (cargo, nvm-managed node, go workspace). This matters when rigging check
+  # is invoked as a bash subprocess from welcome (which doesn't source .zshrc).
+  [[ -f "${BREW_PREFIX}/bin/brew" ]] && eval "$("${BREW_PREFIX}/bin/brew" shellenv)" 2>/dev/null || true
+  export PATH="${HOME}/.cargo/bin:${PATH}"
+  export PATH="${BREW_PREFIX}/opt/rustup/bin:${PATH}"
+  export NVM_DIR="${HOME}/.nvm"
+  # shellcheck source=/dev/null
+  [[ -s "${BREW_PREFIX}/opt/nvm/nvm.sh" ]] && source "${BREW_PREFIX}/opt/nvm/nvm.sh" 2>/dev/null || true
+  export PATH="${HOME}/go/bin:${PATH}"
+
   log_section "Homebrew"
   [[ -x "${BREW_PREFIX}/bin/brew" ]] \
     && _chk "Homebrew" ok || _chk "Homebrew" fail
