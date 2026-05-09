@@ -112,3 +112,80 @@ _ssh_run() {
     ssh "${SSH_OPTS[@]}" "${user}@${ip}" "$@"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# SSH ControlMaster lifecycle
+#
+# SSH_CONTROL_DIR  — temp directory holding the socket (set by ssh_master_open)
+# SSH_CONTROL_SOCKET — path to the Unix socket
+# ---------------------------------------------------------------------------
+
+# ssh_master_open <user> <ip>
+#
+# Opens a background ControlMaster connection to <user>@<ip>.
+# Sets SSH_CONTROL_DIR and SSH_CONTROL_SOCKET.
+# Returns 0 on success, 1 if the master fails to start within 15 s.
+ssh_master_open() {
+  local user="$1" ip="$2"
+
+  SSH_CONTROL_DIR=$(mktemp -d)
+  SSH_CONTROL_SOCKET="${SSH_CONTROL_DIR}/master.sock"
+
+  # Open master in background with ControlPersist=no — the master exits
+  # automatically once all slave connections have closed.
+  ssh "${SSH_OPTS[@]}" \
+    -o ControlMaster=yes \
+    -o "ControlPath=$SSH_CONTROL_SOCKET" \
+    -o ControlPersist=no \
+    -N -f \
+    "${user}@${ip}" || return 1
+
+  # Wait up to 15 s for the socket to appear
+  local i
+  for i in $(seq 1 15); do
+    [[ -S "$SSH_CONTROL_SOCKET" ]] && return 0
+    sleep 1
+  done
+
+  return 1
+}
+
+# ssh_master_run <user> <ip> <command>
+#
+# Runs <command> on the VM over the ControlMaster connection.
+# Requires SSH_CONTROL_SOCKET to be set and valid.
+ssh_master_run() {
+  local user="$1" ip="$2"
+  shift 2
+  ssh -o ControlMaster=no \
+    -o "ControlPath=$SSH_CONTROL_SOCKET" \
+    -o BatchMode=yes \
+    "${user}@${ip}" "$@"
+}
+
+# ssh_master_pipe <user> <ip> <remote_command>
+#
+# Pipes stdin to <remote_command> on the VM over the ControlMaster connection.
+# Use for file uploads: echo content | ssh_master_pipe user ip 'cat > file'
+ssh_master_pipe() {
+  local user="$1" ip="$2"
+  shift 2
+  ssh -o ControlMaster=no \
+    -o "ControlPath=$SSH_CONTROL_SOCKET" \
+    -o BatchMode=yes \
+    "${user}@${ip}" "$@"
+}
+
+# ssh_master_close <user> <ip>
+#
+# Sends the exit control signal to the master, then removes the socket dir.
+# Safe to call even if the master has already exited.
+ssh_master_close() {
+  local user="$1" ip="$2"
+  ssh -o ControlMaster=no \
+    -o "ControlPath=${SSH_CONTROL_SOCKET:-/dev/null}" \
+    -o BatchMode=yes \
+    -O exit \
+    "${user}@${ip}" 2>/dev/null || true
+  rm -rf "${SSH_CONTROL_DIR:-}"
+}
