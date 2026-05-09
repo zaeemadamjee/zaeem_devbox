@@ -9,16 +9,22 @@
 # ---------------------------------------------------------------------------
 # Shared SSH options
 # ---------------------------------------------------------------------------
+# SSH_OPTS is populated lazily by _ssh_opts_init, called once before first use.
+# This avoids expanding $SSH_KEY at source time (before bin/start sets it).
 # - ConnectTimeout=10  : fail fast so retries kick in quickly
 # - ServerAliveInterval/CountMax : detect dead connections within ~15 s
-SSH_OPTS=(
-  -o StrictHostKeyChecking=no
-  -o ConnectTimeout=10
-  -o ServerAliveInterval=5
-  -o ServerAliveCountMax=3
-  -o BatchMode=yes
-  -i "$SSH_KEY"
-)
+SSH_OPTS=()
+_ssh_opts_init() {
+  [[ ${#SSH_OPTS[@]} -gt 0 ]] && return 0
+  SSH_OPTS=(
+    -o StrictHostKeyChecking=no
+    -o ConnectTimeout=10
+    -o ServerAliveInterval=5
+    -o ServerAliveCountMax=3
+    -o BatchMode=yes
+    -i "$SSH_KEY"
+  )
+}
 
 # ---------------------------------------------------------------------------
 # ssh_retry <max_attempts> <delay_s> <command> [args...]
@@ -69,6 +75,7 @@ ssh_wait_ready() {
   fi
 
   # Phase 2: wait for SSH
+  _ssh_opts_init
   for i in $(seq 1 30); do
     if ssh "${SSH_OPTS[@]}" "${user}@${ip}" true 2>/dev/null; then
       echo "$ip" > "$out"
@@ -109,6 +116,7 @@ _ssh_run() {
     ssh -o ControlMaster=no -o "ControlPath=$SSH_CONTROL_SOCKET" \
       -o BatchMode=yes "${user}@${ip}" "$@"
   else
+    _ssh_opts_init
     ssh "${SSH_OPTS[@]}" "${user}@${ip}" "$@"
   fi
 }
@@ -131,6 +139,7 @@ ssh_master_open() {
   SSH_CONTROL_DIR=$(mktemp -d)
   SSH_CONTROL_SOCKET="${SSH_CONTROL_DIR}/master.sock"
 
+  _ssh_opts_init
   # Open master in background with ControlPersist=no — the master exits
   # automatically once all slave connections have closed.
   ssh "${SSH_OPTS[@]}" \
