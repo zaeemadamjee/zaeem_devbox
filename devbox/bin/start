@@ -252,4 +252,13 @@ fi
 echo
 log_info "Connecting to $SSH_HOST..."
 echo
-ssh -A "$SSH_HOST"
+
+# Brief pause to let sshd clear any unauthenticated connections opened during
+# the setup phase — prevents kex_exchange_identification timeouts caused by
+# sshd's MaxStartups limit dropping rapid successive connections.
+sleep 3
+
+_connect() {
+  ssh -A "$SSH_HOST"
+}
+_ssh_retry 3 5 _connect
