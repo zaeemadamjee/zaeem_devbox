@@ -58,32 +58,41 @@ ssh_retry() {
 # ---------------------------------------------------------------------------
 ssh_wait_ready() {
   local instance="$1" zone="$2" project="$3" user="$4" out="$5"
+  local max_s=150
+  local elapsed=0
 
-  # Phase 1: wait for external IP
+  # Phase 1: wait for external IP (up to 15 polls × 5 s = 75 s)
   local ip=""
   local i
   for i in $(seq 1 15); do
+    log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
     ip=$(gcloud compute instances describe "$instance" \
       --zone="$zone" --project="$project" \
       --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
     [[ -n "$ip" ]] && break
     sleep 5
+    elapsed=$(( elapsed + 5 ))
   done
 
   if [[ -z "$ip" ]]; then
+    log_progress_bar_clear
     return 1
   fi
 
-  # Phase 2: wait for SSH
+  # Phase 2: wait for SSH (up to 30 polls × 5 s = 150 s, continuing elapsed)
   _ssh_opts_init
   for i in $(seq 1 30); do
+    log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
     if ssh "${SSH_OPTS[@]}" "${user}@${ip}" true 2>/dev/null; then
       echo "$ip" > "$out"
+      log_progress_bar_clear
       return 0
     fi
     sleep 5
+    elapsed=$(( elapsed + 5 ))
   done
 
+  log_progress_bar_clear
   return 1
 }
 
