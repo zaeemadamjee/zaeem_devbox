@@ -39,8 +39,15 @@ fi
 log_section "VM ($GCP_INSTANCE_NAME)"
 
 log_info "Starting $GCP_INSTANCE_NAME..."
-gcloud compute instances start "$GCP_INSTANCE_NAME" \
-  --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
+_gcloud_tmp=$(mktemp)
+if ! gcloud compute instances start "$GCP_INSTANCE_NAME" \
+       --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet \
+       >"$_gcloud_tmp" 2>&1; then
+  while IFS= read -r _line; do log_dim "  $_line"; done < "$_gcloud_tmp"
+  rm -f "$_gcloud_tmp"
+  exit 1
+fi
+rm -f "$_gcloud_tmp"
 log_ok "Instance started"
 
 IP_FILE=$(mktemp)
@@ -173,4 +180,4 @@ echo
 log_info "Connecting to $SSH_HOST..."
 echo
 
-ssh_retry 3 5 ssh -A "$SSH_HOST"
+ssh_retry 3 5 ssh -A -o LogLevel=ERROR "$SSH_HOST"
