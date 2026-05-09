@@ -18,8 +18,14 @@ check_gcloud_auth
 resolve_instance_zone
 
 log_info "Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..."
-gcloud compute instances stop "$GCP_INSTANCE_NAME" \
-  --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
-
+_gcloud_tmp=$(mktemp)
+if ! gcloud compute instances stop "$GCP_INSTANCE_NAME" \
+       --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet \
+       >"$_gcloud_tmp" 2>&1; then
+  while IFS= read -r _line; do log_dim "  $_line"; done < "$_gcloud_tmp"
+  rm -f "$_gcloud_tmp"
+  exit 1
+fi
+rm -f "$_gcloud_tmp"
 log_ok "$GCP_INSTANCE_NAME stopped"
 log_dim "disk persists — no compute charges until next start"
