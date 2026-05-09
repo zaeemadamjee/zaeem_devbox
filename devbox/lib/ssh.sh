@@ -189,3 +189,53 @@ ssh_master_close() {
     "${user}@${ip}" 2>/dev/null || true
   rm -rf "${SSH_CONTROL_DIR:-}"
 }
+
+# ---------------------------------------------------------------------------
+# _diagnose_ssh_failure <instance> <zone> <project> <user>
+#
+# Prints a diagnostic summary when SSH fails: VM status, external IP,
+# a quick SSH verbose probe, and the last 20 lines of the serial console.
+# ---------------------------------------------------------------------------
+_diagnose_ssh_failure() {
+  local instance="$1" zone="$2" project="$3" user="$4"
+
+  log_section "SSH Diagnostics"
+
+  local status
+  status=$(gcloud compute instances describe "$instance" \
+    --zone="$zone" --project="$project" \
+    --format="value(status)" 2>/dev/null || echo "unknown")
+  if [[ "$status" == "RUNNING" ]]; then
+    log_ok "VM status: RUNNING"
+    log_dim "sshd not ready, wrong key, or firewall block"
+  else
+    log_warn "VM status: $status — expected RUNNING"
+  fi
+
+  local ip
+  ip=$(gcloud compute instances describe "$instance" \
+    --zone="$zone" --project="$project" \
+    --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
+  if [[ -z "$ip" ]]; then
+    log_warn "No external IP — the VM has no natIP; check accessConfig in Terraform"
+    return
+  fi
+  log_ok "External IP: $ip"
+
+  log_warn "SSH connection attempt (verbose output):"
+  echo
+  ssh -vvv -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+    -o BatchMode=yes -i "$SSH_KEY" "${user}@${ip}" true 2>&1 \
+    | grep -E "(Connecting to|connect to address|Permission denied|Connection refused|Connection timed out|Received disconnect|Host key|debug1: Authentications)" \
+    | head -15 \
+    | while IFS= read -r line; do log_dim "$line"; done
+  echo
+
+  log_warn "Serial console — last 20 lines:"
+  echo
+  gcloud compute instances get-serial-port-output "$instance" \
+    --zone="$zone" --project="$project" 2>/dev/null \
+    | tail -20 \
+    | while IFS= read -r line; do log_dim "$line"; done
+  echo
+}
