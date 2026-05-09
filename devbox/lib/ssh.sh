@@ -106,13 +106,19 @@ ssh_wait_ready() {
 # ---------------------------------------------------------------------------
 ssh_wait_startup() {
   local user="$1" ip="$2"
+  local max_s=150
+  local elapsed=0
   local i
   for i in $(seq 1 30); do
+    log_progress_bar "$elapsed" "$max_s" "Waiting for startup script"
     if _ssh_run "$user" "$ip" "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
+      log_progress_bar_clear
       return 0
     fi
     sleep 5
+    elapsed=$(( elapsed + 5 ))
   done
+  log_progress_bar_clear
   return 1
 }
 
