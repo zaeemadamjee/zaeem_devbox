@@ -10,6 +10,7 @@ set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$BIN_DIR/../lib/profile"
+source "$BIN_DIR/../lib/ssh.sh"
 
 PROFILE=$(parse_profile_flag "$@")
 load_profile "$PROFILE"
@@ -22,48 +23,18 @@ SSH_USER="zaeem"
 SSH_CONFIG="$HOME/.ssh/config"
 SSH_HOST="devbox-${PROFILE_NAME}"
 
-# Common SSH options used for all connections in this script.
-# - ConnectTimeout=10  : fail fast so retries kick in quickly
-# - ServerAliveInterval/CountMax : detect dead connections within ~15 s
-SSH_OPTS=(
-  -o StrictHostKeyChecking=no
-  -o ConnectTimeout=10
-  -o ServerAliveInterval=5
-  -o ServerAliveCountMax=3
-  -o BatchMode=yes
-  -i "$SSH_KEY"
-)
-
-# _ssh_retry <max_attempts> <delay_s> <ssh|scp> [args...]
-# Retries the given SSH/SCP command up to <max_attempts> times with <delay_s>
-# seconds between attempts. Exits 0 on first success, 1 after all attempts fail.
-_ssh_retry() {
-  local attempts="$1" delay="$2"
-  shift 2
-  local i
-  for i in $(seq 1 "$attempts"); do
-    if "$@"; then
-      return 0
-    fi
-    if [[ "$i" -lt "$attempts" ]]; then
-      sleep "$delay"
-    fi
-  done
-  return 1
-}
-
 # ---------------------------------------------------------------------------
 # SSH agent check
 # ---------------------------------------------------------------------------
 if ! ssh-add -l &>/dev/null; then
   log_warn "SSH agent has no keys loaded"
   log_dim "If this is a fresh VM, the repo clone will fail without agent forwarding."
-    log_dim "Fix: ssh-add ~/.ssh/zaeem"
+  log_dim "Fix: ssh-add ~/.ssh/zaeem"
   echo
 fi
 
 # ---------------------------------------------------------------------------
-# VM: start + wait for SSH + wait for startup script
+# VM: start + wait for SSH
 # ---------------------------------------------------------------------------
 log_section "VM ($GCP_INSTANCE_NAME)"
 
@@ -72,92 +43,36 @@ gcloud compute instances start "$GCP_INSTANCE_NAME" \
   --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet
 log_ok "Instance started"
 
-_poll_ssh() {
-  local instance="$1" zone="$2" project="$3" user="$4" key="$5" out="$6"
-  for i in $(seq 1 30); do
-    local ip
-    ip=$(gcloud compute instances describe "$instance" \
-      --zone="$zone" --project="$project" \
-      --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
-    if [[ -n "$ip" ]] && ssh "${SSH_OPTS[@]}" "${user}@${ip}" true 2>/dev/null; then
-      echo "$ip" > "$out"
-      return 0
-    fi
-    sleep 5
-  done
-  return 1
-}
-
-_diagnose_ssh_failure() {
-  local instance="$1" zone="$2" project="$3" user="$4" key="$5"
-
-  log_section "SSH Diagnostics"
-
-  local status
-  status=$(gcloud compute instances describe "$instance" \
-    --zone="$zone" --project="$project" \
-    --format="value(status)" 2>/dev/null || echo "unknown")
-  if [[ "$status" == "RUNNING" ]]; then
-    log_ok "VM status: RUNNING"
-    log_dim "sshd not ready, wrong key, or firewall block"
-  else
-    log_warn "VM status: $status — expected RUNNING"
-  fi
-
-  local ip
-  ip=$(gcloud compute instances describe "$instance" \
-    --zone="$zone" --project="$project" \
-    --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
-  if [[ -z "$ip" ]]; then
-    log_warn "No external IP — the VM has no natIP; check accessConfig in Terraform"
-    return
-  fi
-  log_ok "External IP: $ip"
-
-  log_warn "SSH connection attempt (verbose output):"
-  echo
-  ssh -vvv -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-    -o BatchMode=yes -i "$key" "${user}@${ip}" true 2>&1 \
-    | grep -E "(Connecting to|connect to address|Permission denied|Connection refused|Connection timed out|Received disconnect|Host key|debug1: Authentications)" \
-    | head -15 \
-    | while IFS= read -r line; do log_dim "$line"; done
-  echo
-
-  log_warn "Serial console — last 20 lines:"
-  echo
-  gcloud compute instances get-serial-port-output "$instance" \
-    --zone="$zone" --project="$project" 2>/dev/null \
-    | tail -20 \
-    | while IFS= read -r line; do log_dim "$line"; done
-  echo
-}
-
 IP_FILE=$(mktemp)
 trap 'rm -f "$IP_FILE"' EXIT
 
 log_info "Waiting for SSH (up to 2.5 min)..."
-if ! _poll_ssh "$GCP_INSTANCE_NAME" "$GCP_ZONE" "$GCP_PROJECT" "$SSH_USER" "$SSH_KEY" "$IP_FILE"; then
-  log_error "Could not reach VM over SSH after 30 attempts"
-  _diagnose_ssh_failure "$GCP_INSTANCE_NAME" "$GCP_ZONE" "$GCP_PROJECT" "$SSH_USER" "$SSH_KEY"
+if ! ssh_wait_ready "$GCP_INSTANCE_NAME" "$GCP_ZONE" "$GCP_PROJECT" "$SSH_USER" "$IP_FILE"; then
+  log_error "Could not reach VM over SSH after polling"
+  _diagnose_ssh_failure "$GCP_INSTANCE_NAME" "$GCP_ZONE" "$GCP_PROJECT" "$SSH_USER"
   exit 1
 fi
 IP=$(cat "$IP_FILE")
 log_ok "VM is up at $IP"
 
-_poll_startup() {
-  local user="$1" ip="$2"
-  for i in $(seq 1 30); do
-    if ssh "${SSH_OPTS[@]}" "${user}@${ip}" \
-         "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
-      return 0
-    fi
-    sleep 5
-  done
-  return 1
-}
+# ---------------------------------------------------------------------------
+# Open ControlMaster — all setup steps reuse this single connection
+# ---------------------------------------------------------------------------
+log_info "Opening SSH master connection..."
+if ! ssh_retry 3 5 ssh_master_open "$SSH_USER" "$IP"; then
+  log_error "Could not open SSH master connection"
+  exit 1
+fi
+log_ok "Master connection established"
 
+# Ensure master is closed on exit regardless of what follows
+trap 'ssh_master_close "$SSH_USER" "$IP" 2>/dev/null; rm -f "$IP_FILE"' EXIT
+
+# ---------------------------------------------------------------------------
+# Wait for startup script via master
+# ---------------------------------------------------------------------------
 log_info "Waiting for startup script to complete (up to 2.5 min)..."
-if ! _poll_startup "$SSH_USER" "$IP"; then
+if ! ssh_wait_startup "$SSH_USER" "$IP"; then
   log_warn "Startup script did not complete within expected time — connecting anyway"
 else
   log_ok "Startup script complete"
@@ -173,18 +88,12 @@ log_section "Setup"
 LOCAL_SECRETS="$REPO_ROOT/devbox/profiles/${PROFILE_NAME}.env"
 if [[ -f "$LOCAL_SECRETS" ]]; then
   log_info "Copying secrets (${PROFILE_NAME}.env)..."
-  # All three operations (mkdir, write, chmod) run in a single SSH connection:
-  # the file content is piped via stdin and written with `cat` on the remote side,
-  # avoiding a separate SCP connection and reducing exposure to transient IP flaps.
-  _copy_secrets() {
-    ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" \
-      'set -e
-       mkdir -p ~/.config && chmod 700 ~/.config
-       cat > ~/.config/secrets.env
-       chmod 600 ~/.config/secrets.env' \
-      < "$LOCAL_SECRETS"
-  }
-  if _ssh_retry 3 5 _copy_secrets; then
+  if ssh_master_pipe "$SSH_USER" "$IP" \
+       'set -e
+        mkdir -p ~/.config && chmod 700 ~/.config
+        cat > ~/.config/secrets.env
+        chmod 600 ~/.config/secrets.env' \
+       < "$LOCAL_SECRETS"; then
     log_ok "Secrets copied to ~/.config/secrets.env"
   else
     log_warn "Failed to copy secrets — you can retry by re-running bin/start"
@@ -194,10 +103,7 @@ else
 fi
 
 log_info "Installing Ghostty terminfo..."
-_install_terminfo() {
-  infocmp -x | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" -- tic -x - 2>/dev/null
-}
-if _ssh_retry 3 5 _install_terminfo; then
+if infocmp -x | ssh_master_pipe "$SSH_USER" "$IP" -- tic -x - 2>/dev/null; then
   log_ok "Ghostty terminfo installed"
 else
   log_warn "Could not install Ghostty terminfo (non-fatal, will retry on next start)"
@@ -212,26 +118,31 @@ touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
 
 if grep -q "^Host ${SSH_HOST}$" "$SSH_CONFIG" 2>/dev/null; then
-  python3 - "$SSH_CONFIG" "$IP" "$SSH_HOST" "$SSH_KEY" <<'PYEOF'
-import sys, re
-config_file, new_ip, host, new_key = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-with open(config_file) as f:
-    content = f.read()
-# Update HostName
-content = re.sub(
-    r'(Host ' + re.escape(host) + r'\n(?:[ \t]+\S.*\n)*?[ \t]+HostName )\S+',
-    lambda m: m.group(1) + new_ip,
-    content
-)
-# Update IdentityFile (keeps key path current across renames)
-content = re.sub(
-    r'(Host ' + re.escape(host) + r'\n(?:[ \t]+\S.*\n)*?[ \t]+IdentityFile )\S+',
-    lambda m: m.group(1) + new_key,
-    content
-)
-with open(config_file, 'w') as f:
-    f.write(content)
-PYEOF
+  # Update managed keys within the existing stanza using awk.
+  # Replaces the value of any managed key found in the stanza; leaves all
+  # other lines (including keys we don't manage) untouched.
+  awk -v host="$SSH_HOST" \
+      -v HostName="$IP" \
+      -v IdentityFile="$SSH_KEY" \
+      -v ConnectTimeout="10" \
+      -v ServerAliveInterval="5" \
+      -v ServerAliveCountMax="3" \
+    '
+    BEGIN { in_stanza=0 }
+    /^Host / {
+      in_stanza = ($0 == "Host " host)
+    }
+    in_stanza && /^[[:space:]]+(HostName|IdentityFile|ConnectTimeout|ServerAliveInterval|ServerAliveCountMax)[[:space:]]/ {
+      match($0, /^([[:space:]]+)([^[:space:]]+)/, parts)
+      key = parts[2]
+      if (key == "HostName")             { print parts[1] key " " HostName;             next }
+      if (key == "IdentityFile")         { print parts[1] key " " IdentityFile;         next }
+      if (key == "ConnectTimeout")       { print parts[1] key " " ConnectTimeout;       next }
+      if (key == "ServerAliveInterval")  { print parts[1] key " " ServerAliveInterval;  next }
+      if (key == "ServerAliveCountMax")  { print parts[1] key " " ServerAliveCountMax;  next }
+    }
+    { print }
+    ' "$SSH_CONFIG" > "${SSH_CONFIG}.tmp" && mv "${SSH_CONFIG}.tmp" "$SSH_CONFIG"
   log_ok "Updated $SSH_HOST → $IP"
 else
   cat >> "$SSH_CONFIG" <<EOF
@@ -249,16 +160,15 @@ EOF
   log_ok "Added $SSH_HOST to SSH config"
 fi
 
+# ---------------------------------------------------------------------------
+# Close master and open interactive session
+# ---------------------------------------------------------------------------
+ssh_master_close "$SSH_USER" "$IP"
+# Reset trap now that master is closed cleanly
+trap 'rm -f "$IP_FILE"' EXIT
+
 echo
 log_info "Connecting to $SSH_HOST..."
 echo
 
-# Brief pause to let sshd clear any unauthenticated connections opened during
-# the setup phase — prevents kex_exchange_identification timeouts caused by
-# sshd's MaxStartups limit dropping rapid successive connections.
-sleep 3
-
-_connect() {
-  ssh -A "$SSH_HOST"
-}
-_ssh_retry 3 5 _connect
+ssh_retry 3 5 ssh -A "$SSH_HOST"
