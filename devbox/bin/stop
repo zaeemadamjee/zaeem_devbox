@@ -23,13 +23,13 @@ _gcloud_tmp=$(mktemp)
 _stop_max=30
 
 # Run gcloud stop in the background; tick the progress bar in the foreground.
-gcloud compute instances stop "$GCP_INSTANCE_NAME" \
-  --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet \
-  >"$_gcloud_tmp" 2>&1 &
+# Redirect is on a single line to keep bash 3.2 happy with the trailing &.
+gcloud compute instances stop "$GCP_INSTANCE_NAME" --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet >"$_gcloud_tmp" 2>&1 &
 _gcloud_pid=$!
 
 _elapsed=0
-while kill -0 "$_gcloud_pid" 2>/dev/null; do
+while true; do
+  kill -0 "$_gcloud_pid" 2>/dev/null || break
   log_progress_bar "$_elapsed" "$_stop_max" "Stopping VM"
   sleep 1
   _elapsed=$(( _elapsed + 1 ))
@@ -38,7 +38,9 @@ done
 log_progress_bar_clear
 
 # Collect exit status from the background job.
-if ! wait "$_gcloud_pid"; then
+_stop_rc=0
+wait "$_gcloud_pid" || _stop_rc=$?
+if [[ "$_stop_rc" -ne 0 ]]; then
   while IFS= read -r _line; do log_dim "  $_line"; done < "$_gcloud_tmp"
   rm -f "$_gcloud_tmp"
   exit 1
