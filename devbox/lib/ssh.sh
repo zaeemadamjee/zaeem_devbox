@@ -60,18 +60,22 @@ ssh_wait_ready() {
   local instance="$1" zone="$2" project="$3" user="$4" out="$5"
   local max_s=150
   local elapsed=0
+  local i t
 
   # Phase 1: wait for external IP (up to 15 polls × 5 s = 75 s)
   local ip=""
-  local i
   for i in $(seq 1 15); do
     log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
     ip=$(gcloud compute instances describe "$instance" \
       --zone="$zone" --project="$project" \
       --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
     [[ -n "$ip" ]] && break
-    sleep 5
-    elapsed=$(( elapsed + 5 ))
+    # Tick 1 s at a time so the bar updates every second
+    for t in 1 2 3 4 5; do
+      sleep 1
+      elapsed=$(( elapsed + 1 ))
+      log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
+    done
   done
 
   if [[ -z "$ip" ]]; then
@@ -88,8 +92,12 @@ ssh_wait_ready() {
       log_progress_bar_clear
       return 0
     fi
-    sleep 5
-    elapsed=$(( elapsed + 5 ))
+    # Tick 1 s at a time so the bar updates every second
+    for t in 1 2 3 4 5; do
+      sleep 1
+      elapsed=$(( elapsed + 1 ))
+      log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
+    done
   done
 
   log_progress_bar_clear
@@ -108,15 +116,19 @@ ssh_wait_startup() {
   local user="$1" ip="$2"
   local max_s=150
   local elapsed=0
-  local i
+  local i t
   for i in $(seq 1 30); do
     log_progress_bar "$elapsed" "$max_s" "Waiting for startup script"
     if _ssh_run "$user" "$ip" "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
       log_progress_bar_clear
       return 0
     fi
-    sleep 5
-    elapsed=$(( elapsed + 5 ))
+    # Tick 1 s at a time so the bar updates every second
+    for t in 1 2 3 4 5; do
+      sleep 1
+      elapsed=$(( elapsed + 1 ))
+      log_progress_bar "$elapsed" "$max_s" "Waiting for startup script"
+    done
   done
   log_progress_bar_clear
   return 1
