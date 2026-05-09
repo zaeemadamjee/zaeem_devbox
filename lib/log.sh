@@ -55,3 +55,48 @@ log_warn() {
 log_dim() {
   echo -e "  ${_LOG_DIM}$1${_LOG_RESET}"
 }
+
+# Progress bar — renders/updates in-place using \r.
+# Usage: log_progress_bar <elapsed_s> <max_s> <label>
+#
+# On a TTY: overwrites the current line each call. Call log_progress_bar_clear
+# before printing a log_ok/log_error so the bar line is fully erased.
+# Off-TTY (pipe/CI): prints a single plain line on the first call, then no-ops.
+_LOG_PROGRESS_PRINTED=0
+log_progress_bar() {
+  local elapsed="$1" max="$2" label="$3"
+  local width=20
+
+  # Compute fill (integer arithmetic; cap at width)
+  local fill=$(( elapsed * width / (max > 0 ? max : 1) ))
+  (( fill > width )) && fill=$width
+  local empty=$(( width - fill ))
+
+  local bar_filled="" bar_empty=""
+  [[ $fill  -gt 0 ]] && bar_filled=$(printf '%0.s█' $(seq 1 "$fill"))
+  [[ $empty -gt 0 ]] && bar_empty=$(printf '%0.s░' $(seq 1 "$empty"))
+
+  # Elapsed / max display (show as integers)
+  local time_str="${elapsed}s / ${max}s"
+
+  if [[ -t 1 ]]; then
+    # TTY: overwrite the current line
+    printf "\r  %-30s ${_LOG_DIM}[${_LOG_RESET}${_LOG_GREEN}%s${_LOG_RESET}${_LOG_DIM}%s]${_LOG_RESET} %s   " \
+      "$label" "$bar_filled" "$bar_empty" "$time_str"
+  else
+    # Non-TTY: print once, then silence
+    if [[ "$_LOG_PROGRESS_PRINTED" -eq 0 ]]; then
+      printf "  %s [%s%s] %s\n" "$label" "$bar_filled" "$bar_empty" "$time_str"
+      _LOG_PROGRESS_PRINTED=1
+    fi
+  fi
+}
+
+# Clears the progress bar line (TTY only) so the next log_ok/log_error
+# lands on a clean line.
+log_progress_bar_clear() {
+  if [[ -t 1 ]]; then
+    printf "\r%-80s\r" ""
+  fi
+  _LOG_PROGRESS_PRINTED=0
+}
