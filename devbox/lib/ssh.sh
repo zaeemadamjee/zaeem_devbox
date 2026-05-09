@@ -79,3 +79,36 @@ ssh_wait_ready() {
 
   return 1
 }
+
+# ---------------------------------------------------------------------------
+# ssh_wait_startup <user> <ip>
+#
+# Waits up to 2.5 min for /var/lib/startup-complete to exist on the VM.
+# Uses the ControlMaster if SSH_CONTROL_SOCKET is set and the socket exists;
+# falls back to a direct connection using SSH_OPTS otherwise.
+# Returns 0 when the marker is found, 1 on timeout.
+# ---------------------------------------------------------------------------
+ssh_wait_startup() {
+  local user="$1" ip="$2"
+  local i
+  for i in $(seq 1 30); do
+    if _ssh_run "$user" "$ip" "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
+# _ssh_run <user> <ip> <command>
+# Internal helper: runs <command> via ControlMaster if available, direct otherwise.
+_ssh_run() {
+  local user="$1" ip="$2"
+  shift 2
+  if [[ -n "${SSH_CONTROL_SOCKET:-}" ]] && [[ -S "$SSH_CONTROL_SOCKET" ]]; then
+    ssh -o ControlMaster=no -o "ControlPath=$SSH_CONTROL_SOCKET" \
+      -o BatchMode=yes "${user}@${ip}" "$@"
+  else
+    ssh "${SSH_OPTS[@]}" "${user}@${ip}" "$@"
+  fi
+}
