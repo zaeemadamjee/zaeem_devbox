@@ -118,7 +118,9 @@ touch "$SSH_CONFIG"
 chmod 600 "$SSH_CONFIG"
 
 if grep -q "^Host ${SSH_HOST}$" "$SSH_CONFIG" 2>/dev/null; then
-  # Update managed keys within the existing stanza using awk.
+  # Update managed keys within the existing stanza using POSIX awk.
+  # $2 is the key name (first non-whitespace token after leading indent).
+  # $1 preserves the leading whitespace via the OFS trick.
   # Replaces the value of any managed key found in the stanza; leaves all
   # other lines (including keys we don't manage) untouched.
   awk -v host="$SSH_HOST" \
@@ -133,13 +135,13 @@ if grep -q "^Host ${SSH_HOST}$" "$SSH_CONFIG" 2>/dev/null; then
       in_stanza = ($0 == "Host " host)
     }
     in_stanza && /^[[:space:]]+(HostName|IdentityFile|ConnectTimeout|ServerAliveInterval|ServerAliveCountMax)[[:space:]]/ {
-      match($0, /^([[:space:]]+)([^[:space:]]+)/, parts)
-      key = parts[2]
-      if (key == "HostName")             { print parts[1] key " " HostName;             next }
-      if (key == "IdentityFile")         { print parts[1] key " " IdentityFile;         next }
-      if (key == "ConnectTimeout")       { print parts[1] key " " ConnectTimeout;       next }
-      if (key == "ServerAliveInterval")  { print parts[1] key " " ServerAliveInterval;  next }
-      if (key == "ServerAliveCountMax")  { print parts[1] key " " ServerAliveCountMax;  next }
+      key = $1
+      indent = substr($0, 1, index($0, key) - 1)
+      if (key == "HostName")             { print indent key " " HostName;             next }
+      if (key == "IdentityFile")         { print indent key " " IdentityFile;         next }
+      if (key == "ConnectTimeout")       { print indent key " " ConnectTimeout;       next }
+      if (key == "ServerAliveInterval")  { print indent key " " ServerAliveInterval;  next }
+      if (key == "ServerAliveCountMax")  { print indent key " " ServerAliveCountMax;  next }
     }
     { print }
     ' "$SSH_CONFIG" > "${SSH_CONFIG}.tmp" && mv "${SSH_CONFIG}.tmp" "$SSH_CONFIG"
