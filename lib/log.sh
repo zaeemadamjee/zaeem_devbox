@@ -73,8 +73,9 @@ log_progress_bar() {
   local empty=$(( width - fill ))
 
   local bar_filled="" bar_empty=""
-  [[ $fill  -gt 0 ]] && bar_filled=$(printf '%0.s█' $(seq 1 "$fill"))
-  [[ $empty -gt 0 ]] && bar_empty=$(printf '%0.s░' $(seq 1 "$empty"))
+  local i
+  for (( i=0; i<fill; i++ )); do bar_filled+="█"; done
+  for (( i=0; i<empty; i++ )); do bar_empty+="░"; done
 
   # Elapsed / max display (show as integers)
   local time_str="${elapsed}s / ${max}s"
@@ -93,7 +94,8 @@ log_progress_bar() {
 }
 
 # Clears the progress bar line (TTY only) so the next log_ok/log_error
-# lands on a clean line.
+# lands on a clean line. Also resets the non-TTY print-once guard so a
+# subsequent wait loop will print its initial line.
 log_progress_bar_clear() {
   if [[ -t 1 ]]; then
     printf "\r%-80s\r" ""
