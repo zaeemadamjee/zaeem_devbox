@@ -18,7 +18,7 @@ check_gcloud_auth
 resolve_instance_zone
 
 _gcloud_tmp=$(mktemp)
-_stop_max=90
+_stop_max=120
 
 # Run gcloud stop in the background; tick the progress bar in the foreground.
 # Redirect is on a single line to keep bash 3.2 happy with the trailing &.
