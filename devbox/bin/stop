@@ -20,27 +20,22 @@ resolve_instance_zone
 _gcloud_tmp=$(mktemp)
 _stop_max=120
 
-# Run gcloud stop in a background subshell that writes its exit code to a file.
-# This avoids bash job-control "Done" notifications on completion.
-_gcloud_rc_file="${_gcloud_tmp}.rc"
-( gcloud compute instances stop "$GCP_INSTANCE_NAME" --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet >"$_gcloud_tmp" 2>&1; echo $? >"$_gcloud_rc_file" ) &
+# Run gcloud stop in the background; tick the progress bar in the foreground.
+gcloud compute instances stop "$GCP_INSTANCE_NAME" --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet >"$_gcloud_tmp" 2>&1 &
 _gcloud_pid=$!
-disown "$_gcloud_pid" 2>/dev/null || true
+_start=$SECONDS
 
-_elapsed=0
 while true; do
   kill -0 "$_gcloud_pid" 2>/dev/null || break
-  log_progress_bar "$_elapsed" "$_stop_max" "Stopping VM"
+  log_progress_bar $(( SECONDS - _start )) "$_stop_max" "Stopping VM"
   sleep 1
-  _elapsed=$(( _elapsed + 1 ))
 done
 
 log_progress_bar_clear
 
-# Read exit code written by the subshell.
+# Suppress the bash job-control "Done" notification by redirecting stderr on wait.
 _stop_rc=0
-[[ -f "$_gcloud_rc_file" ]] && _stop_rc=$(cat "$_gcloud_rc_file")
-rm -f "$_gcloud_rc_file"
+{ wait "$_gcloud_pid"; } 2>/dev/null || _stop_rc=$?
 if [[ "$_stop_rc" -ne 0 ]]; then
   while IFS= read -r _line; do log_dim "  $_line"; done < "$_gcloud_tmp"
   rm -f "$_gcloud_tmp"
