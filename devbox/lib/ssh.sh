@@ -213,7 +213,7 @@ ssh_master_open() {
     -o "ControlPath=$SSH_CONTROL_SOCKET" \
     -o ControlPersist=no \
     -N -f \
-    "${user}@${ip}" || return 1
+    "${user}@${ip}" 2>/dev/null || return 1
 
   # Wait up to 15 s for the socket to appear
   local i
