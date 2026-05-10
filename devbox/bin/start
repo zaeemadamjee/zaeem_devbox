@@ -56,7 +56,8 @@ log_progress_bar_clear
 _start_rc=0
 { wait "$_gcloud_pid"; } 2>/dev/null || _start_rc=$?
 if [[ "$_start_rc" -ne 0 ]]; then
-  while IFS= read -r _line; do log_dim "  $_line"; done < "$_gcloud_tmp"
+  log_error "Failed to start VM"
+  while IFS= read -r _line; do log_dim "$_line"; done < "$_gcloud_tmp"
   rm -f "$_gcloud_tmp"
   exit 1
 fi

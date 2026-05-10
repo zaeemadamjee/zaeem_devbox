@@ -37,7 +37,8 @@ log_progress_bar_clear
 _stop_rc=0
 { wait "$_gcloud_pid"; } 2>/dev/null || _stop_rc=$?
 if [[ "$_stop_rc" -ne 0 ]]; then
-  while IFS= read -r _line; do log_dim "  $_line"; done < "$_gcloud_tmp"
+  log_error "Failed to stop VM"
+  while IFS= read -r _line; do log_dim "$_line"; done < "$_gcloud_tmp"
   rm -f "$_gcloud_tmp"
   exit 1
 fi
