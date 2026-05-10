@@ -142,7 +142,6 @@ EOF
 # Main
 # ---------------------------------------------------------------------------
 main() {
-  print_banner "devbox"
   local cmd="${1:-help}"
   shift || true
 
@@ -152,7 +151,7 @@ main() {
     stop)       exec "$BIN_DIR/stop"       "$@" ;;
     reset)      exec "$BIN_DIR/reset"      "$@" ;;
     initialize) exec "$BIN_DIR/initialize" "$@" ;;
-    help|--help|-h) cmd_help ;;
+    help|--help|-h) print_banner "devbox"; cmd_help ;;
     *)
       log_error "Unknown command: $cmd"
       cmd_help

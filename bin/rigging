@@ -309,7 +309,6 @@ cmd_check() {
 }
 
 cmd_all() {
-  print_banner "rigging"
   _setup_ssh
   cmd_install
   cmd_link
