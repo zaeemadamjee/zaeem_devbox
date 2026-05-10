@@ -106,7 +106,7 @@ log_section "Setup"
 
 LOCAL_SECRETS="$REPO_ROOT/devbox/profiles/${PROFILE_NAME}.env"
 if [[ -f "$LOCAL_SECRETS" ]]; then
-  log_info "Copying secrets (${PROFILE_NAME}.env)..."
+  log_pending "Copying secrets (${PROFILE_NAME}.env)..."
   if ssh_master_pipe "$SSH_USER" "$IP" \
        'set -e
         mkdir -p ~/.config && chmod 700 ~/.config
