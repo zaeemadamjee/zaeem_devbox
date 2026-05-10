@@ -99,12 +99,12 @@ log_progress_bar() {
 
   if [[ -t 1 ]]; then
     # TTY: overwrite the current line
-    printf "\r  %-30s ${_LOG_DIM}[${_LOG_RESET}${_LOG_GREEN}%s${_LOG_RESET}${_LOG_DIM}%s]${_LOG_RESET} %s   " \
+    printf "\r  ${_LOG_DIM}·${_LOG_RESET} %-28s ${_LOG_DIM}[${_LOG_RESET}${_LOG_GREEN}%s${_LOG_RESET}${_LOG_DIM}%s]${_LOG_RESET} %s   " \
       "$label" "$bar_filled" "$bar_empty" "$time_str"
   else
     # Non-TTY: print once, then silence
     if [[ "$_LOG_PROGRESS_PRINTED" -eq 0 ]]; then
-      printf "  %s [%s%s] %s\n" "$label" "$bar_filled" "$bar_empty" "$time_str"
+      printf "  · %s [%s%s] %s\n" "$label" "$bar_filled" "$bar_empty" "$time_str"
       _LOG_PROGRESS_PRINTED=1
     fi
   fi
