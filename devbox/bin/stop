@@ -17,10 +17,8 @@ check_gcp_project
 check_gcloud_auth
 resolve_instance_zone
 
-log_info "Stopping $GCP_INSTANCE_NAME (profile: $PROFILE_NAME)..."
-
 _gcloud_tmp=$(mktemp)
-_stop_max=30
+_stop_max=90
 
 # Run gcloud stop in the background; tick the progress bar in the foreground.
 # Redirect is on a single line to keep bash 3.2 happy with the trailing &.
