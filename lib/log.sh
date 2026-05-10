@@ -38,12 +38,20 @@ log_info() {
 
 # Success (✓ prefix, indented, green)
 log_ok() {
-  echo -e "  ${_LOG_GREEN}✓${_LOG_RESET} $1"
+  if [[ -t 1 ]]; then
+    printf "\r  ${_LOG_GREEN}✓${_LOG_RESET} %s\n" "$1"
+  else
+    echo -e "  ${_LOG_GREEN}✓${_LOG_RESET} $1"
+  fi
 }
 
 # Error (✗ prefix, indented, red, stderr)
 log_error() {
-  echo -e "  ${_LOG_RED}✗${_LOG_RESET} $1" >&2
+  if [[ -t 2 ]]; then
+    printf "\r  ${_LOG_RED}✗${_LOG_RESET} %s\n" "$1" >&2
+  else
+    echo -e "  ${_LOG_RED}✗${_LOG_RESET} $1" >&2
+  fi
 }
 
 # Warning (! prefix, indented, yellow)
@@ -54,6 +62,15 @@ log_warn() {
 # Secondary info (dim gray, indented)
 log_dim() {
   echo -e "  ${_LOG_DIM}$1${_LOG_RESET}"
+}
+
+# Pending step (· prefix, no newline on TTY — overwrite with log_ok/log_error to replace in-place)
+log_pending() {
+  if [[ -t 1 ]]; then
+    printf "  ${_LOG_DIM}·${_LOG_RESET} %s" "$*"
+  else
+    echo "  · $*"
+  fi
 }
 
 # Progress bar — renders/updates in-place using \r.

@@ -78,7 +78,7 @@ log_ok "VM is up at $IP"
 # ---------------------------------------------------------------------------
 # Open ControlMaster — all setup steps reuse this single connection
 # ---------------------------------------------------------------------------
-log_info "Opening SSH master connection..."
+log_pending "Opening SSH master connection..."
 if ! ssh_retry 3 5 ssh_master_open "$SSH_USER" "$IP"; then
   log_error "Could not open SSH master connection"
   exit 1
@@ -121,7 +121,7 @@ else
   log_warn "No secrets file at ${LOCAL_SECRETS} — skipping"
 fi
 
-log_info "Installing Ghostty terminfo..."
+log_pending "Installing Ghostty terminfo..."
 if infocmp -x | ssh_master_pipe "$SSH_USER" "$IP" -- tic -x - 2>/dev/null; then
   log_ok "Ghostty terminfo installed"
 else
