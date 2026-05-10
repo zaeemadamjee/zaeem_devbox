@@ -60,48 +60,72 @@ ssh_wait_ready() {
   local instance="$1" zone="$2" project="$3" user="$4" out="$5"
   local max_s=150
   local elapsed=0
-  local i t
 
-  # Phase 1: wait for external IP (up to 15 polls × 5 s = 75 s)
-  local ip=""
-  for i in $(seq 1 15); do
-    log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
-    ip=$(gcloud compute instances describe "$instance" \
-      --zone="$zone" --project="$project" \
-      --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
-    [[ -n "$ip" ]] && break
-    # Tick 1 s at a time so the bar updates every second
-    for t in 1 2 3 4 5; do
-      sleep 1
-      elapsed=$(( elapsed + 1 ))
-      log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
-    done
-  done
+  # Polling runs in a background subshell so the foreground can tick the
+  # progress bar every second without gaps caused by gcloud/SSH probe latency.
+  #
+  # The subshell writes one of:
+  #   "ok <ip>"  — IP found and SSH accepted
+  #   "noip"     — timed out waiting for external IP
+  #   "nossh"    — timed out waiting for SSH
+  # to a result file, then exits.  The foreground watches for that file.
+  local _result_file
+  _result_file=$(mktemp)
 
-  if [[ -z "$ip" ]]; then
-    log_progress_bar_clear
-    return 1
-  fi
-
-  # Phase 2: wait for SSH (up to 30 polls × 5 s = 150 s, continuing elapsed)
   _ssh_opts_init
-  for i in $(seq 1 30); do
-    log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
-    if ssh "${SSH_OPTS[@]}" "${user}@${ip}" true 2>/dev/null; then
-      echo "$ip" > "$out"
-      log_progress_bar_clear
-      return 0
-    fi
-    # Tick 1 s at a time so the bar updates every second
-    for t in 1 2 3 4 5; do
-      sleep 1
-      elapsed=$(( elapsed + 1 ))
-      log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
-    done
-  done
 
+  (
+    local ip="" i
+    # Phase 1: wait for external IP (up to 15 polls × 5 s = 75 s)
+    for i in $(seq 1 15); do
+      ip=$(gcloud compute instances describe "$instance" \
+        --zone="$zone" --project="$project" \
+        --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
+      [[ -n "$ip" ]] && break
+      sleep 5
+    done
+
+    if [[ -z "$ip" ]]; then
+      echo "noip" > "$_result_file"
+      exit 0
+    fi
+
+    # Phase 2: wait for SSH (up to 30 polls × 5 s = 150 s)
+    for i in $(seq 1 30); do
+      if ssh "${SSH_OPTS[@]}" "${user}@${ip}" true 2>/dev/null; then
+        echo "ok $ip" > "$_result_file"
+        exit 0
+      fi
+      sleep 5
+    done
+
+    echo "nossh" > "$_result_file"
+  ) &
+  local _poll_pid=$!
+
+  # Foreground: tick bar every second until the poller exits.
+  while true; do
+    kill -0 "$_poll_pid" 2>/dev/null || break
+    log_progress_bar "$elapsed" "$max_s" "Waiting for SSH"
+    sleep 1
+    elapsed=$(( elapsed + 1 ))
+  done
   log_progress_bar_clear
-  return 1
+
+  wait "$_poll_pid" 2>/dev/null || true
+  local _result
+  _result=$(cat "$_result_file")
+  rm -f "$_result_file"
+
+  case "$_result" in
+    ok\ *)
+      echo "${_result#ok }" > "$out"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -116,22 +140,37 @@ ssh_wait_startup() {
   local user="$1" ip="$2"
   local max_s=150
   local elapsed=0
-  local i t
-  for i in $(seq 1 30); do
-    log_progress_bar "$elapsed" "$max_s" "Waiting for startup script"
-    if _ssh_run "$user" "$ip" "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
-      log_progress_bar_clear
-      return 0
-    fi
-    # Tick 1 s at a time so the bar updates every second
-    for t in 1 2 3 4 5; do
-      sleep 1
-      elapsed=$(( elapsed + 1 ))
-      log_progress_bar "$elapsed" "$max_s" "Waiting for startup script"
+
+  local _result_file
+  _result_file=$(mktemp)
+
+  (
+    local i
+    for i in $(seq 1 30); do
+      if _ssh_run "$user" "$ip" "sudo test -f /var/lib/startup-complete" 2>/dev/null; then
+        echo "ok" > "$_result_file"
+        exit 0
+      fi
+      sleep 5
     done
+    echo "timeout" > "$_result_file"
+  ) &
+  local _poll_pid=$!
+
+  while true; do
+    kill -0 "$_poll_pid" 2>/dev/null || break
+    log_progress_bar "$elapsed" "$max_s" "Waiting for startup script"
+    sleep 1
+    elapsed=$(( elapsed + 1 ))
   done
   log_progress_bar_clear
-  return 1
+
+  wait "$_poll_pid" 2>/dev/null || true
+  local _result
+  _result=$(cat "$_result_file")
+  rm -f "$_result_file"
+
+  [[ "$_result" == "ok" ]]
 }
 
 # _ssh_run <user> <ip> <command>

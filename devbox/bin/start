@@ -53,7 +53,6 @@ log_ok "Instance started"
 IP_FILE=$(mktemp)
 trap 'rm -f "$IP_FILE"' EXIT
 
-log_info "Waiting for SSH (up to 2.5 min)..."
 if ! ssh_wait_ready "$GCP_INSTANCE_NAME" "$GCP_ZONE" "$GCP_PROJECT" "$SSH_USER" "$IP_FILE"; then
   log_error "Could not reach VM over SSH after polling"
   _diagnose_ssh_failure "$GCP_INSTANCE_NAME" "$GCP_ZONE" "$GCP_PROJECT" "$SSH_USER"
@@ -78,7 +77,6 @@ trap 'ssh_master_close "$SSH_USER" "$IP" 2>/dev/null; rm -f "$IP_FILE"' EXIT
 # ---------------------------------------------------------------------------
 # Wait for startup script via master
 # ---------------------------------------------------------------------------
-log_info "Waiting for startup script to complete (up to 2.5 min)..."
 if ! ssh_wait_startup "$SSH_USER" "$IP"; then
   log_warn "Startup script did not complete within expected time — connecting anyway"
 else
