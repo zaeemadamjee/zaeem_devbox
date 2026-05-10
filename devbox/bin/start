@@ -38,11 +38,24 @@ fi
 # ---------------------------------------------------------------------------
 log_section "VM ($GCP_INSTANCE_NAME)"
 
-log_info "Starting $GCP_INSTANCE_NAME..."
 _gcloud_tmp=$(mktemp)
-if ! gcloud compute instances start "$GCP_INSTANCE_NAME" \
-       --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet \
-       >"$_gcloud_tmp" 2>&1; then
+
+# Run gcloud start in the background; tick the progress bar in the foreground.
+gcloud compute instances start "$GCP_INSTANCE_NAME" --zone="$GCP_ZONE" --project="$GCP_PROJECT" --quiet >"$_gcloud_tmp" 2>&1 &
+_gcloud_pid=$!
+_start=$SECONDS
+
+while true; do
+  kill -0 "$_gcloud_pid" 2>/dev/null || break
+  log_progress_bar $(( SECONDS - _start )) 90 "Starting VM"
+  sleep 1
+done
+
+log_progress_bar_clear
+
+_start_rc=0
+{ wait "$_gcloud_pid"; } 2>/dev/null || _start_rc=$?
+if [[ "$_start_rc" -ne 0 ]]; then
   while IFS= read -r _line; do log_dim "  $_line"; done < "$_gcloud_tmp"
   rm -f "$_gcloud_tmp"
   exit 1
